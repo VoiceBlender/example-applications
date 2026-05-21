@@ -67,7 +67,7 @@ CALL_LOG_BACKEND=redis docker compose --profile redis up --build
 
 The compose file:
 
-- Brings up three services connected on the default compose network: **caddy** (the only one with a host port — `8090:80`), **contact-centre** (built from the local `Dockerfile`, internal-only), and **redis** (opt-in via the `redis` profile).
+- Brings up three services connected on the default compose network: **caddy** (the only one with host ports — `80:80` and `443:443` by default, override with `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT` if those are taken), **contact-centre** (built from the local `Dockerfile`, internal-only), and **redis** (opt-in via the `redis` profile).
 - Adds `host.docker.internal:host-gateway` to contact-centre so it can reach a VoiceBlender server on the host (the Linux equivalent of macOS/Windows behaviour).
 - Lists **every** env var the app understands inline, with the same defaults as [`.env.example`](./cmd/contact-centre/.env.example), so it doubles as the canonical reference.
 - Wraps the variables you're most likely to override (`SUPERVISOR_PASSWORD`, `AGENT_PASSWORD`, `CALL_LOG_BACKEND`, `CALL_LOG_REDIS_URL`, `CALL_LOG_REDIS_KEY`) in `${VAR:-default}` so a sibling `.env` file or shell exports take precedence without editing the YAML.
@@ -75,7 +75,7 @@ The compose file:
 
 ### Caddy reverse proxy
 
-[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service. By default it terminates plain HTTP on the container's port 80 (published to host `:8090`) and proxies everything to `contact-centre:8090`. WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`) are passed through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config.
+[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service. By default it terminates plain HTTP on the container's port 80 (published to host `:80`) and proxies everything to `contact-centre:8090`. WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`) are passed through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config. If host port 80 is already taken, override with `CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up`.
 
 #### Enabling HTTPS with Let's Encrypt
 
@@ -84,7 +84,6 @@ The Caddyfile and compose file are templated for a one-shot switch to automatic 
 ```bash
 CADDY_DOMAIN=cc.example.com \
   CADDY_ACME_EMAIL=admin@example.com \
-  CADDY_HTTP_PORT=80 CADDY_HTTPS_PORT=443 \
   HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
   docker compose up --build -d
 ```
@@ -94,8 +93,8 @@ CADDY_DOMAIN=cc.example.com \
 | `CADDY_DOMAIN` | _(unset)_ → `http://:80` | Domain Caddy serves on. Setting a hostname here trips auto-HTTPS. |
 | `CADDY_ACME_EMAIL` | _placeholder_ | Account email for Let's Encrypt renewal notifications. |
 | `CADDY_ACME_CA` | LE production | ACME directory URL. Override with the LE staging endpoint while testing. |
-| `CADDY_HTTP_PORT` | `8090` | Host port mapped to Caddy's container port 80. Set to `80` for real LE issuance (HTTP-01 challenge needs port 80 publicly reachable). |
-| `CADDY_HTTPS_PORT` | `8443` | Host port mapped to Caddy's container port 443. Set to `443` for public HTTPS. |
+| `CADDY_HTTP_PORT` | `80` | Host port mapped to Caddy's container port 80. Override if something else on the host already binds 80. Let's Encrypt's HTTP-01 challenge requires this to be reachable at the *public* port 80. |
+| `CADDY_HTTPS_PORT` | `443` | Host port mapped to Caddy's container port 443. Override if something else on the host already binds 443. Let's Encrypt's TLS-ALPN-01 challenge requires this to be reachable at the *public* port 443. |
 | `HOLD_MUSIC_URL` | local HTTP | URL VoiceBlender fetches the hold-music file from. Point this at the same domain over HTTPS so VoiceBlender's outbound fetch matches the public site. |
 
 Certificates and ACME state persist in the `caddy-data` named volume — restarting or recreating the container doesn't trigger a re-issuance and won't burn rate-limits. Wipe the volume (`docker compose down -v`) to start from scratch.

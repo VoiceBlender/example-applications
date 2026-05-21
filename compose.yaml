@@ -3,10 +3,10 @@
 # Topology:
 #
 #     browser / SIP-fetcher
-#              │  http://localhost:8090
+#              │  http://localhost  (or https://<CADDY_DOMAIN>)
 #              ▼
 #     ┌─────────────────┐    contact-centre:8090   ┌─────────────────┐
-#     │  caddy (8090)   │ ───────────────────────▶ │ contact-centre  │
+#     │  caddy (80/443) │ ───────────────────────▶ │ contact-centre  │
 #     └─────────────────┘                          └─────────────────┘
 #                                                          │
 #                                                          ▼  (redis profile)
@@ -20,7 +20,11 @@
 #
 # Quick start (memory-backed call log, default):
 #
-#     docker compose up --build
+#     docker compose up --build              # binds host :80 and :443
+#
+# Already got something on host :80? Pick alternative ports:
+#
+#     CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up --build
 #
 # With the Redis-backed call log:
 #
@@ -30,14 +34,13 @@
 #
 #     CADDY_DOMAIN=cc.example.com \
 #       CADDY_ACME_EMAIL=admin@example.com \
-#       CADDY_HTTP_PORT=80 CADDY_HTTPS_PORT=443 \
 #       HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
 #       docker compose up --build -d
 #
 # Visit:
-#   http://localhost:8090/        supervisor panel  (via Caddy, local HTTP)
-#   http://localhost:8090/agent   agent panel       (via Caddy, local HTTP)
-#   https://<CADDY_DOMAIN>/       supervisor panel  (Let's Encrypt cert)
+#   http://localhost/        supervisor panel  (via Caddy, local HTTP)
+#   http://localhost/agent   agent panel       (via Caddy, local HTTP)
+#   https://<CADDY_DOMAIN>/  supervisor panel  (Let's Encrypt cert)
 #
 # Networking notes:
 # - VOICEBLENDER_URL points at a VoiceBlender server on the *host* via
@@ -45,8 +48,8 @@
 #   container, replace it with that service's hostname.
 # - HOLD_MUSIC_URL is the URL VoiceBlender will fetch the hold-music
 #   file from, so it must be reachable from VoiceBlender's network.
-#   With VoiceBlender on the host and Caddy published on :8090,
-#   host.docker.internal:8090 works (Caddy proxies through to the app).
+#   With VoiceBlender on the host and Caddy published on :80,
+#   host.docker.internal works (Caddy proxies through to the app).
 # - contact-centre no longer publishes a host port; it's reachable
 #   only inside the compose network as `contact-centre:8090`. To poke
 #   at it directly during debugging, `docker compose exec contact-centre
@@ -71,10 +74,11 @@ services:
       # the published port below to match if you change this.
       LISTEN_ADDR: ":8090"
       # URL VoiceBlender will fetch hold music from. Must be reachable
-      # from VoiceBlender's network. For production HTTPS swap this for
-      # https://${CADDY_DOMAIN}/moh/new_music.mp3 so the SIP fetcher
-      # goes through Caddy.
-      HOLD_MUSIC_URL: "${HOLD_MUSIC_URL:-http://host.docker.internal:8090/moh/new_music.mp3}"
+      # from VoiceBlender's network. With Caddy on the standard port 80
+      # this is just plain `host.docker.internal/moh/...`. For production
+      # HTTPS swap this for https://${CADDY_DOMAIN}/moh/new_music.mp3 so
+      # the SIP fetcher goes through Caddy.
+      HOLD_MUSIC_URL: "${HOLD_MUSIC_URL:-http://host.docker.internal/moh/new_music.mp3}"
       # How often the queue-position announcement loops.
       ANNOUNCEMENT_INTERVAL: "20s"
 
@@ -136,14 +140,13 @@ services:
   caddy:
     image: caddy:2-alpine
     container_name: cc-caddy
-    # Two ports published. Defaults are friendly to local trials
-    # (8090/8443) so they don't clash with anything else on the host.
-    # For real Let's Encrypt issuance the public 80 + 443 must reach
-    # the container, so set CADDY_HTTP_PORT=80 and CADDY_HTTPS_PORT=443
-    # in your environment (or .env file) on the production host.
+    # Two ports published. Defaults are the standard 80 / 443 so the
+    # stack is Let's-Encrypt-ready out of the box. Override if you've
+    # already got something on those host ports (e.g.
+    # `CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up`).
     ports:
-      - "${CADDY_HTTP_PORT:-8090}:80"
-      - "${CADDY_HTTPS_PORT:-8443}:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
     environment:
       # Unset / empty CADDY_DOMAIN → falls through to `http://:80`,
       # which makes Caddy serve plain HTTP. Set a real domain (e.g.

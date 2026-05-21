@@ -25,7 +25,7 @@ When the supervisor clicks **Listen**, the browser opens a WebRTC connection to 
 
 Clicking **Whisper** acquires the microphone the first time (browser permission prompt), `replaceTrack`s the silent track for the mic on the existing peer connection, and un-mutes it. Subsequent toggles are a pure `track.enabled = !track.enabled` mute/unmute — no server round-trip, no matrix change, no extra WebRTC negotiation. Multiple supervisors monitoring the same call can whisper concurrently; each one's mute state is independent. Clicking **✕** in the header pill mutes while staying in the listen.
 
-**Agent panel** at <http://localhost:8090/agent> — name-only sign-in, then a live view of just the queued calls (ringing calls are hidden). On sign-in, the browser also opens a WebRTC audio leg to VoiceBlender (Opus, trickle ICE) — the agent's microphone is the inbound media; the remote audio sink is in place for the next stage (bridging the agent into a caller's room). The header pill (`mic off / mic init… / audio dialling / mic live / mic failed`) reflects the audio bridge state; clicking it after a failure retries.
+**Agent panel** at <http://localhost:8090/agent> — name-only sign-in, then a live view of just the queued calls (ringing calls are hidden). The WebRTC audio leg into VoiceBlender (Opus, trickle ICE) is established **lazily, on the first "Take call" click** — sign-in no longer prompts for the microphone or allocates a server-side leg. When a call ends, the leg is torn down again (the browser remembers the mic grant, so later calls don't re-prompt). This keeps idle agents from holding open media resources. The header pill (`ready / mic init… / audio dialling / mic live / mic muted / mic failed`) reflects the audio state; clicking it after a failure resets to `ready`.
 
 The agent's WS at `/api/agent/stream` is the single channel: it carries queue snapshots **and** all WebRTC signaling. Sessions are in-memory; restart the server and agents need to sign in again.
 
@@ -90,8 +90,8 @@ Open the operator panel at <http://localhost:8090/> and the agent panel at <http
 3. Hang up caller A.
    - Both panels: the first row fades out; caller B jumps to position `01`.
    - The agent's "longest wait" stat re-anchors to caller B's clock.
-4. On the agent panel, observe the `mic off → mic init… → audio dialling → mic live` transitions. Server logs show `agent webrtc leg created`. Granting microphone permission is required.
-5. With `mic live` and a queued call visible, click **Take call** on a row.
+4. On the agent panel the pill sits at `ready` — no mic prompt yet, no WebRTC leg.
+5. With a queued call visible, click **Take call** on a row. The pill now runs `mic init… → audio dialling → mic live` (grant microphone permission on the first call), the server logs `agent webrtc leg created`, and the call bridges. When the call ends the leg is released and the pill returns to `ready`; the next **Take call** re-establishes audio without re-prompting.
    - Hold music stops in the caller's room; the agent's WebRTC leg is added to the same room.
    - Operator panel: the row's state badge flips to **on call · &lt;agent name&gt;** (green).
    - Agent panel: the queue row vanishes (queue only shows waiting callers); a green "ON CALL" card appears at the top of the dashboard showing the caller and a live duration. Remaining queued calls disable their "Take call" buttons.

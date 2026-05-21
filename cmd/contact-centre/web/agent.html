@@ -312,6 +312,12 @@ input  { font: inherit; }
 .audio-state[data-audio-state="muted"] .dot {
   background: var(--amber); animation: dotBlink 1.2s steps(2) infinite;
 }
+.audio-state[data-audio-state="ready"] {
+  color: var(--fg-dim); border-color: var(--border-bright);
+}
+.audio-state[data-audio-state="ready"] .dot {
+  background: var(--cyan); opacity: 0.7;
+}
 
 .logout-btn {
   background: transparent;
@@ -795,9 +801,9 @@ input  { font: inherit; }
         <div class="identity-card">
           <span class="identity-tag">agent</span>
           <span class="identity-name" data-agent-name>—</span>
-          <span class="audio-state" data-audio-state="off" data-audio title="microphone / audio bridge to VoiceBlender">
+          <span class="audio-state" data-audio-state="ready" data-audio title="microphone / audio bridge to VoiceBlender — established on first Take call">
             <span class="dot"></span>
-            <span data-audio-label>mic off</span>
+            <span data-audio-label>ready</span>
           </span>
         </div>
         <button class="logout-btn" data-logout>Log out</button>
@@ -922,6 +928,7 @@ input  { font: inherit; }
   let audioLive = false;          // true once the WebRTC PC is 'connected'
   let muted = false;              // client-side mic mute state
   let currentCall = null;         // { leg_id, from, to, answered_at, on_hold }
+  let takingCall = false;         // true while a 'Take call' is mid-flight
 
   // -- WebRTC state --------------------------------------------------------
   let pc = null;
@@ -1067,10 +1074,12 @@ input  { font: inherit; }
     ws.addEventListener('open', () => {
       setStream('live', 'streaming');
       reconnectDelay = 700;
-      // (Re)establish audio: the server's leg dies with the prior WS, so
-      // every fresh WS needs a fresh offer/answer.
+      // Audio is established lazily on the first 'Take call' click — no
+      // mic prompt at sign-in. Tear down any pre-existing PC so the next
+      // call starts from a clean state (the server's old leg died with
+      // the prior WS anyway).
       stopAudio();
-      startAudio();
+      setAudio('ready', 'ready');
     });
     ws.addEventListener('close', () => {
       setStream('lost', 'reconnecting');
@@ -1095,6 +1104,18 @@ input  { font: inherit; }
   }
 
   // -- WebRTC --------------------------------------------------------------
+  //
+  // The WebRTC leg into VoiceBlender is established LAZILY on the first
+  // 'Take call' click — sign-in doesn't pop the mic prompt or allocate
+  // a server-side leg. Once the leg is up it stays alive for the rest
+  // of the session and is reused by subsequent calls; only sign-out or
+  // a WS reconnect tears it back down.
+  //
+  // ensureAudioReady() returns a Promise that resolves true when the
+  // PeerConnection is in the 'connected' state and false on any
+  // unrecoverable failure (mic denied, ICE failure, etc.). It's safe
+  // to call from multiple places concurrently — the first call starts
+  // the handshake, every subsequent call just awaits the same Promise.
   function setAudio(state, label) {
     audioStateEl.dataset.audioState = state;
     audioLabelEl.textContent = label;
@@ -1102,18 +1123,40 @@ input  { font: inherit; }
   audioStateEl.addEventListener('click', () => {
     if (audioStateEl.dataset.audioState === 'failed') {
       stopAudio();
-      startAudio();
+      setAudio('ready', 'ready');
     }
   });
 
+  // Promise wiring so callers can await PC 'connected' state.
+  let audioReadyResolve = null;
+  let audioReadyPromise = null;
+  function settleAudioReady(ok) {
+    if (audioReadyResolve) {
+      audioReadyResolve(ok);
+      audioReadyResolve = null;
+      audioReadyPromise = null;
+    }
+  }
+
+  // Returns a Promise<boolean>. Resolves true once the PC reaches
+  // 'connected', false on any failure path.
+  function ensureAudioReady() {
+    if (audioLive) return Promise.resolve(true);
+    if (audioReadyPromise) return audioReadyPromise;
+    audioReadyPromise = new Promise((res) => { audioReadyResolve = res; });
+    startAudio(); // fire-and-forget; resolution happens via settleAudioReady
+    return audioReadyPromise;
+  }
+
   async function startAudio() {
-    if (pc) return; // already running
+    if (pc) return; // PC already exists; ensureAudioReady is awaiting it
     setAudio('requesting', 'mic init…');
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
       console.warn('getUserMedia', e);
       setAudio('failed', 'mic denied — click to retry');
+      settleAudioReady(false);
       return;
     }
     setAudio('connecting', 'audio dialling');
@@ -1139,10 +1182,10 @@ input  { font: inherit; }
     pc.onconnectionstatechange = () => {
       if (!pc) return;
       const s = pc.connectionState;
-      if (s === 'connected')         { audioLive = true;  setAudio(muted ? 'muted' : 'live', muted ? 'mic muted' : 'mic live'); refreshTakeButtons(); }
-      else if (s === 'failed')       { audioLive = false; setAudio('failed', 'audio failed — click to retry'); refreshTakeButtons(); }
+      if (s === 'connected')         { audioLive = true;  setAudio(muted ? 'muted' : 'live', muted ? 'mic muted' : 'mic live'); refreshTakeButtons(); settleAudioReady(true); }
+      else if (s === 'failed')       { audioLive = false; setAudio('failed', 'audio failed — click to retry'); refreshTakeButtons(); settleAudioReady(false); }
       else if (s === 'disconnected') { audioLive = false; setAudio('connecting', 'reconnecting'); refreshTakeButtons(); }
-      else if (s === 'closed')       { audioLive = false; setAudio('off', 'mic off'); refreshTakeButtons(); }
+      else if (s === 'closed')       { audioLive = false; setAudio('ready', 'ready'); refreshTakeButtons(); settleAudioReady(false); }
     };
     try {
       const offer = await pc.createOffer();
@@ -1151,6 +1194,7 @@ input  { font: inherit; }
     } catch (e) {
       console.warn('offer', e);
       setAudio('failed', 'offer error — click to retry');
+      settleAudioReady(false);
     }
   }
 
@@ -1169,7 +1213,12 @@ input  { font: inherit; }
     catch (e) { console.warn('addIceCandidate', e); }
   }
 
+  // stopAudio tears down the local PeerConnection + mic and tells the
+  // server to hang up the agent's WebRTC leg (no-op if the WS is
+  // already closing). Called when a call ends, on sign-out, and on WS
+  // (re)connect.
   function stopAudio() {
+    const hadLeg = !!pc;
     if (pc) { try { pc.close(); } catch {} pc = null; }
     if (localStream) {
       for (const t of localStream.getTracks()) t.stop();
@@ -1177,16 +1226,38 @@ input  { font: inherit; }
     }
     audioSinkEl.srcObject = null;
     audioLive = false;
+    settleAudioReady(false);
+    // Release the server-side leg so VoiceBlender reclaims it between
+    // calls instead of holding it open for the whole session.
+    if (hadLeg) sendWS({ type: 'webrtc.hangup' });
     if (audioStateEl.dataset.audioState !== 'failed') {
-      setAudio('off', 'mic off');
+      setAudio('ready', 'ready');
     }
     refreshTakeButtons();
   }
 
   // -- call answer / hangup -----------------------------------------------
-  function takeCall(legID) {
-    if (!audioLive || currentCall) return;
-    sendWS({ type: 'call.answer', leg_id: legID });
+  //
+  // First click prompts for mic + sets up the PC. The leg is torn back
+  // down when the call ends (see renderCurrentCall), so each call gets
+  // a fresh leg — though the browser remembers the mic grant, so only
+  // the very first call shows a permission prompt. Re-entrancy is
+  // guarded by `takingCall` so a double-click doesn't fire two offers.
+  async function takeCall(legID) {
+    if (takingCall || currentCall) return;
+    takingCall = true;
+    refreshTakeButtons();
+    try {
+      if (!audioLive) {
+        const ok = await ensureAudioReady();
+        if (!ok) return;       // mic denied / ICE failed — pill already shows why
+        if (currentCall) return; // call landed via another route in the meantime
+      }
+      sendWS({ type: 'call.answer', leg_id: legID });
+    } finally {
+      takingCall = false;
+      refreshTakeButtons();
+    }
   }
 
   hangupBtn.addEventListener('click', () => {
@@ -1215,7 +1286,10 @@ input  { font: inherit; }
   }
 
   function refreshTakeButtons() {
-    const blocked = !audioLive || !!currentCall;
+    // Buttons stay clickable without live audio — the first click
+    // establishes the leg. Only block while already on a call or while
+    // a take is mid-flight (audio prep in progress).
+    const blocked = !!currentCall || takingCall;
     for (const { row } of live.values()) {
       const btn = row.querySelector('[data-take]');
       if (btn) btn.disabled = blocked;
@@ -1224,8 +1298,14 @@ input  { font: inherit; }
   }
 
   function renderCurrentCall(call) {
+    const wasOnCall = !!currentCall;
     currentCall = call || null;
     if (!currentCall) {
+      // Call just ended (agent hung up, caller dropped, or transfer):
+      // release the WebRTC leg so it doesn't linger between calls. The
+      // next 'Take call' establishes a fresh one (no mic re-prompt —
+      // the browser remembers the grant).
+      if (wasOnCall) stopAudio();
       callcardEl.hidden = true;
       ccUserEl.textContent = '—';
       ccHostEl.textContent = '';
