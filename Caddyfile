@@ -1,0 +1,51 @@
+# Caddy front-end for the contact-centre example.
+#
+# Sits between the browser/SIP-fetcher and the contact-centre container.
+# Caddy's reverse_proxy handles WebSocket upgrades transparently — no
+# extra config needed for /api/calls/stream or /api/agent/stream.
+#
+# Two modes, controlled by CADDY_DOMAIN:
+#
+#   CADDY_DOMAIN unset (default)
+#     Plain HTTP on container :80, published as host :8090. Friction-free
+#     for local trials.
+#
+#   CADDY_DOMAIN=cc.example.com
+#     Caddy uses that domain as the site address. Auto-HTTPS kicks in:
+#     a certificate is provisioned from Let's Encrypt the first time
+#     the container is reached at the domain. For issuance to succeed
+#     the public DNS for CADDY_DOMAIN must point at this host, and host
+#     ports 80 + 443 must be published to the Caddy container (set
+#     CADDY_HTTP_PORT=80 and CADDY_HTTPS_PORT=443 in compose).
+#     Certs persist in the `caddy-data` named volume.
+#
+# Optional env knobs:
+#   CADDY_ACME_EMAIL    Email associated with the ACME account. Used by
+#                       Let's Encrypt for renewal-failure notifications.
+#                       Defaults to an unattended placeholder.
+#   CADDY_ACME_CA       ACME directory URL. Useful for testing against
+#                       the Let's Encrypt staging environment without
+#                       burning production rate-limits.
+
+{
+	# ACME account email. Anonymous accounts work, but a real address
+	# means Let's Encrypt can warn you when renewal goes sideways.
+	email {$CADDY_ACME_EMAIL:no-reply@example.invalid}
+
+	# ACME directory. Defaults to Let's Encrypt production. Override
+	# for staging:
+	#   CADDY_ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory
+	acme_ca {$CADDY_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+}
+
+# Site address comes from CADDY_DOMAIN. The default `http://:80` keeps
+# the local example HTTP-only (the `http://` scheme prefix disables the
+# auto-HTTPS attempt Caddy would otherwise make for a bare `:80`).
+{$CADDY_DOMAIN:http://:80} {
+	reverse_proxy contact-centre:8090
+
+	log {
+		output stdout
+		format console
+	}
+}

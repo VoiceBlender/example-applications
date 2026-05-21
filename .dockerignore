@@ -1,0 +1,30 @@
+# Build context = this directory. Trim things the build doesn't need.
+
+# VCS + tooling state.
+.git
+.gitignore
+.gitattributes
+.claude
+.vscode
+.idea
+.DS_Store
+
+# Pre-built host-architecture binaries that live alongside the source
+# while developing — copying them would just waste context.
+contact-centre
+cmd/*/contact-centre
+
+# Local config / secrets. Keep the example file so the README
+# instructions still make sense inside the build.
+.env
+.env.*
+!.env.example
+
+# Tests artefacts.
+*.test
+cover.out
+coverage.txt
+
+# Docker itself.
+Dockerfile
+.dockerignore

@@ -1,0 +1,187 @@
+# Docker Compose example for the VoiceBlender contact-centre app.
+#
+# Topology:
+#
+#     browser / SIP-fetcher
+#              │  http://localhost:8090
+#              ▼
+#     ┌─────────────────┐    contact-centre:8090   ┌─────────────────┐
+#     │  caddy (8090)   │ ───────────────────────▶ │ contact-centre  │
+#     └─────────────────┘                          └─────────────────┘
+#                                                          │
+#                                                          ▼  (redis profile)
+#                                                  ┌─────────────────┐
+#                                                  │     redis       │
+#                                                  └─────────────────┘
+#
+# Every environment variable the app accepts is listed below — uncomment
+# and tweak as needed. Sensible defaults are set; `letmein` passwords
+# are placeholders, change them before running anywhere shared.
+#
+# Quick start (memory-backed call log, default):
+#
+#     docker compose up --build
+#
+# With the Redis-backed call log:
+#
+#     CALL_LOG_BACKEND=redis docker compose --profile redis up --build
+#
+# With HTTPS via Let's Encrypt (public host with DNS pointing at it):
+#
+#     CADDY_DOMAIN=cc.example.com \
+#       CADDY_ACME_EMAIL=admin@example.com \
+#       CADDY_HTTP_PORT=80 CADDY_HTTPS_PORT=443 \
+#       HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
+#       docker compose up --build -d
+#
+# Visit:
+#   http://localhost:8090/        supervisor panel  (via Caddy, local HTTP)
+#   http://localhost:8090/agent   agent panel       (via Caddy, local HTTP)
+#   https://<CADDY_DOMAIN>/       supervisor panel  (Let's Encrypt cert)
+#
+# Networking notes:
+# - VOICEBLENDER_URL points at a VoiceBlender server on the *host* via
+#   `host.docker.internal`. If you run VoiceBlender in another
+#   container, replace it with that service's hostname.
+# - HOLD_MUSIC_URL is the URL VoiceBlender will fetch the hold-music
+#   file from, so it must be reachable from VoiceBlender's network.
+#   With VoiceBlender on the host and Caddy published on :8090,
+#   host.docker.internal:8090 works (Caddy proxies through to the app).
+# - contact-centre no longer publishes a host port; it's reachable
+#   only inside the compose network as `contact-centre:8090`. To poke
+#   at it directly during debugging, `docker compose exec contact-centre
+#   wget -qO- http://localhost:8090/login` or temporarily add a
+#   `ports:` entry.
+
+services:
+  contact-centre:
+    build: .
+    image: cc-example:latest
+    container_name: cc-example
+    # No host port mapping — Caddy fronts this service. Compose-internal
+    # callers reach it as `contact-centre:8090`.
+    expose:
+      - "8090"
+    environment:
+      # ---------------------------------------------------- core ----------
+      # VoiceBlender REST + VSI base URL. The app derives the WebSocket
+      # URL from this (http→ws, https→wss; appends /vsi).
+      VOICEBLENDER_URL: "http://host.docker.internal:8080/v1"
+      # Address the app's HTTP server binds inside the container. Change
+      # the published port below to match if you change this.
+      LISTEN_ADDR: ":8090"
+      # URL VoiceBlender will fetch hold music from. Must be reachable
+      # from VoiceBlender's network. For production HTTPS swap this for
+      # https://${CADDY_DOMAIN}/moh/new_music.mp3 so the SIP fetcher
+      # goes through Caddy.
+      HOLD_MUSIC_URL: "${HOLD_MUSIC_URL:-http://host.docker.internal:8090/moh/new_music.mp3}"
+      # How often the queue-position announcement loops.
+      ANNOUNCEMENT_INTERVAL: "20s"
+
+      # ----------------------------------------------------- TTS ----------
+      TTS_VOICE: "Rachel"
+      TTS_PROVIDER: "elevenlabs"
+      # Optional if VoiceBlender already has the provider's API key.
+      # TTS_API_KEY: "sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+      # ----------------------------------------------------- STT ----------
+      # Live transcription kicks in once an agent answers a call. The
+      # supervisor panel shows transcripts in real time and persists
+      # them in the call log.
+      STT_LANGUAGE: "en"
+      STT_PROVIDER: "elevenlabs"
+      # STT_API_KEY: "sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+      # -------------------------------------------------- KPIs / metrics --
+      # Service-level threshold and the rolling window used for SL/ASA/
+      # AHT/Abandon/Longest-Wait on the supervisor's Metrics board.
+      SLA_THRESHOLD: "20s"
+      METRICS_WINDOW: "30m"
+
+      # ---------------------------------------------------- Auth ----------
+      # Static passwords that gate the supervisor and agent panels.
+      # Leave a value empty (or unset) to disable auth for that side.
+      # Only the password is validated; the username on the login form
+      # is free-form and used as the agent's display name.
+      SUPERVISOR_PASSWORD: "${SUPERVISOR_PASSWORD:-letmein}"
+      AGENT_PASSWORD: "${AGENT_PASSWORD:-letmein}"
+
+      # -------------------------------------------------- Call log --------
+      # "memory" (default) → in-process ring buffer (lost on restart).
+      # "redis"            → any Redis-compatible server (see profile).
+      CALL_LOG_BACKEND: "${CALL_LOG_BACKEND:-memory}"
+      CALL_LOG_MAX: "200"
+      # Pointed at the in-compose Redis service below when the redis
+      # profile is active. Override these to use an external Redis.
+      CALL_LOG_REDIS_URL: "${CALL_LOG_REDIS_URL:-redis://redis:6379/0}"
+      CALL_LOG_REDIS_KEY: "${CALL_LOG_REDIS_KEY:-contactcentre:call_log}"
+    extra_hosts:
+      # Linux needs this so host.docker.internal resolves; macOS / Windows
+      # do it natively but the line is harmless on those platforms.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/login"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # ---------------------------------------------------- Caddy front-end --
+  # Reverse proxy on the user-facing port. Reverse_proxy in Caddy v2
+  # handles WebSocket upgrades transparently, so /api/calls/stream and
+  # /api/agent/stream work without extra config. Edit ./Caddyfile to
+  # switch to HTTPS (real domain → automatic Let's Encrypt) or to add
+  # headers, basic auth, rate limits, etc.
+  caddy:
+    image: caddy:2-alpine
+    container_name: cc-caddy
+    # Two ports published. Defaults are friendly to local trials
+    # (8090/8443) so they don't clash with anything else on the host.
+    # For real Let's Encrypt issuance the public 80 + 443 must reach
+    # the container, so set CADDY_HTTP_PORT=80 and CADDY_HTTPS_PORT=443
+    # in your environment (or .env file) on the production host.
+    ports:
+      - "${CADDY_HTTP_PORT:-8090}:80"
+      - "${CADDY_HTTPS_PORT:-8443}:443"
+    environment:
+      # Unset / empty CADDY_DOMAIN → falls through to `http://:80`,
+      # which makes Caddy serve plain HTTP. Set a real domain (e.g.
+      # cc.example.com) → Caddy auto-issues a Let's Encrypt cert and
+      # serves HTTPS. Defaults below are duplicated from the Caddyfile
+      # so empty env values still produce a valid configuration.
+      CADDY_DOMAIN: "${CADDY_DOMAIN:-http://:80}"
+      CADDY_ACME_EMAIL: "${CADDY_ACME_EMAIL:-no-reply@example.invalid}"
+      CADDY_ACME_CA: "${CADDY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      contact-centre:
+        condition: service_started
+    restart: unless-stopped
+
+  # ----------------------------------------------------- Redis sidecar ----
+  # Opt-in: `docker compose --profile redis up`. With this profile active
+  # set CALL_LOG_BACKEND=redis (env / .env / shell) to point the app at
+  # the sidecar above.
+  redis:
+    image: redis:7-alpine
+    container_name: cc-redis
+    profiles: ["redis"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  caddy-data:
+  caddy-config:
+  redis-data:
