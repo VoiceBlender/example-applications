@@ -46,6 +46,7 @@
 //	STT_LANGUAGE           STT language code (default: en)
 //	STT_PROVIDER           STT provider name (default: elevenlabs)
 //	STT_API_KEY            STT API key (optional if pre-configured in VoiceBlender)
+//	ANSWER_CODECS          Comma-separated codec preference order for inbound early-media + answer SDP, e.g. "opus,PCMA,PCMU". The first one the caller offered wins; if none match, the server's default order is used. (default: unset)
 //	SLA_THRESHOLD          Service-level threshold for KPI tile (default: 20s)
 //	METRICS_WINDOW         Rolling window for KPI averages and counts (default: 30m)
 //	SUPERVISOR_PASSWORD    Static password to access the supervisor panel (default: unset, no auth)
@@ -64,6 +65,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +91,7 @@ type app struct {
 	sttLanguage   string
 	sttProvider   string
 	sttAPIKey     string
+	answerCodecs  []string // codec preference order for inbound answer
 	slaThreshold  time.Duration
 	metricsWindow time.Duration
 
@@ -159,6 +162,7 @@ func main() {
 		sttLanguage:   envOr("STT_LANGUAGE", "en"),
 		sttProvider:   envOr("STT_PROVIDER", "elevenlabs"),
 		sttAPIKey:     os.Getenv("STT_API_KEY"),
+		answerCodecs:  splitCSV(os.Getenv("ANSWER_CODECS")),
 		slaThreshold:  slaThreshold,
 		metricsWindow: metricsWindow,
 		reg:           newRegistry(),
@@ -307,8 +311,14 @@ func (a *app) handle(ctx context.Context, ring *voiceblender.LegRingingEvent, an
 	defer sub.Close()
 
 	// --- 1. Ringback: early media + UK ringback tone for 3 s. -------------
-	log.Info("cmd", "action", "early_media")
-	if _, err := leg.EarlyMedia(ctx, voiceblender.EarlyMediaLegRequest{}); err != nil {
+	// Negotiate the media codec: walk our ANSWER_CODECS preference order
+	// and pick the first one the caller actually offered (offered_codecs
+	// on the ringing event). The same codec is locked in for both the
+	// 183 early-media SDP and the 200 OK answer SDP. Empty (no preference
+	// matched, or none configured) leaves the server's default order.
+	codec := chooseCodec(a.answerCodecs, ring.OfferedCodecs)
+	log.Info("cmd", "action", "early_media", "codec", codec)
+	if _, err := leg.EarlyMedia(ctx, voiceblender.EarlyMediaLegRequest{Codec: codec}); err != nil {
 		log.Warn("early media not available, answering immediately", "error", err)
 	} else {
 		log.Info("cmd", "action", "play_leg", "tone", "gb_ringback")
@@ -328,8 +338,11 @@ func (a *app) handle(ctx context.Context, ring *voiceblender.LegRingingEvent, an
 	}
 
 	// --- 2. Answer. --------------------------------------------------------
-	log.Info("cmd", "action", "answer_leg")
-	if _, err := leg.Answer(ctx, voiceblender.AnswerLegRequest{}); err != nil {
+	// Reuse the codec negotiated above. If early media succeeded the codec
+	// is already locked in at the 183; passing it again is harmless and
+	// keeps the answer correct on the path where early media was skipped.
+	log.Info("cmd", "action", "answer_leg", "codec", codec)
+	if _, err := leg.Answer(ctx, voiceblender.AnswerLegRequest{Codec: codec}); err != nil {
 		log.Error("answer leg", "error", err)
 		return
 	}
@@ -1382,6 +1395,50 @@ func parseDurationOr(log *slog.Logger, key, defStr string, def time.Duration) ti
 		return def
 	}
 	return d
+}
+
+// splitCSV parses a comma-separated env value into a trimmed, non-empty
+// slice. "opus, PCMA ,," → ["opus", "PCMA"].
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// chooseCodec returns the first codec in prefs (preference order) that
+// the caller actually offered, using the codec name as the server spells
+// it in offered_codecs. Matching is case-insensitive. Returns "" when
+// prefs is empty or none of them were offered — letting VoiceBlender
+// fall back to its own default preference order rather than answering
+// with a codec the caller can't decode.
+func chooseCodec(prefs []string, offered []voiceblender.OfferedCodec) string {
+	if len(prefs) == 0 || len(offered) == 0 {
+		return ""
+	}
+	offeredByName := make(map[string]string, len(offered))
+	for _, raw := range offered {
+		var c struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &c); err != nil || c.Name == "" {
+			continue
+		}
+		offeredByName[strings.ToLower(c.Name)] = c.Name
+	}
+	for _, pref := range prefs {
+		if name, ok := offeredByName[strings.ToLower(pref)]; ok {
+			return name
+		}
+	}
+	return ""
 }
 
 func envInt(key string, def int) int {

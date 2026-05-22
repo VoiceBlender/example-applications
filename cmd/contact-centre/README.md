@@ -7,7 +7,7 @@ A VoiceBlender example app that acts as the front door of a contact centre.
 What happens on each inbound SIP call:
 
 1. **Ring.** Early media plays the UK ringback tone (`gb_ringback`) for ~3 seconds.
-2. **Answer.** The call is answered.
+2. **Answer.** The call is answered. Set `ANSWER_CODECS` to a comma-separated preference order (e.g. `opus,PCMA,PCMU`, from `PCMU`/`PCMA`/`G722`/`opus`) to choose the media codec for the early-media and answer SDP. The app picks the first codec in the list that the caller actually offered (from the `leg.ringing` `offered_codecs`); if none match — or it's unset — VoiceBlender falls back to its own default preference order.
 3. **Per-caller waiting room.** The caller is placed alone in a dedicated VoiceBlender room (`waiting-<leg_id>`). VoiceBlender's mixed-minus-self mixer guarantees callers cannot hear each other or each other's announcements.
 4. **Hold experience.** Hold music loops in the room. Every `ANNOUNCEMENT_INTERVAL` (default 20 s) the caller hears their live position in the queue: *"You are next in the queue. Thank you for holding."* or *"You are number 2 in the queue…"*. Position drops when an earlier caller hangs up.
 

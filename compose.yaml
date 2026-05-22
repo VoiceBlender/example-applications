@@ -81,6 +81,12 @@ services:
       HOLD_MUSIC_URL: "${HOLD_MUSIC_URL:-http://host.docker.internal/moh/new_music.mp3}"
       # How often the queue-position announcement loops.
       ANNOUNCEMENT_INTERVAL: "20s"
+      # Codec preference order for answering inbound SIP calls (comma
+      # separated). Applied to the 183 early-media SDP and the 200 OK
+      # answer SDP. The app picks the first codec the caller actually
+      # offered; if none match (or empty) VoiceBlender uses its default
+      # order. Valid names: PCMU, PCMA, G722, opus.
+      ANSWER_CODECS: "${ANSWER_CODECS:-}"
 
       # ----------------------------------------------------- TTS ----------
       TTS_VOICE: "Rachel"
