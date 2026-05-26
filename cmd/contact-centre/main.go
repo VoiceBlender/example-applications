@@ -17,22 +17,23 @@
 //   - GET  /                     the supervisor panel (embedded HTML)
 //   - GET  /api/calls            JSON snapshot of currently active calls
 //   - GET  /api/calls/stream     WebSocket — bidirectional supervisor channel
-//                                              server → client: snapshot / webrtc.answer / webrtc.candidate / webrtc.error / listen.error
-//                                              client → server: webrtc.offer / webrtc.candidate / webrtc.hangup / listen.start {room_id} / listen.stop
+//     server → client: snapshot / webrtc.answer / webrtc.candidate / webrtc.error / listen.error
+//     client → server: webrtc.offer / webrtc.candidate / webrtc.hangup / listen.start {room_id} / listen.stop
 //   - GET  /agent                the agent panel: name-only login + queue dashboard
 //   - POST /api/agents/login     {name} → {agent_id, name}
 //   - POST /api/agents/logout    {agent_id}
 //   - GET  /api/agents/whoami    ?agent_id=… → {name} or 404
 //   - GET  /api/agent/stream     ?agent_id=… → WebSocket: bidirectional
-//                                              server → client: snapshot / webrtc.answer / webrtc.candidate / webrtc.error / call.error
-//                                              client → server: webrtc.offer / webrtc.candidate / webrtc.hangup / call.answer / call.hangup
+//     server → client: snapshot / webrtc.answer / webrtc.candidate / webrtc.error / call.error
+//     client → server: webrtc.offer / webrtc.candidate / webrtc.hangup / call.answer / call.hangup
 //   - GET  /moh/new_music.mp3    hold-music MP3 (VoiceBlender fetches this)
 //
 // Call log:
-//   Every completed call is appended to the store selected by CALL_LOG_BACKEND
-//   ("memory" — default, in-process ring buffer of CALL_LOG_MAX entries; or
-//   "redis" — any Redis-compatible server via CALL_LOG_REDIS_URL). The
-//   supervisor snapshot includes the most-recent CALL_LOG_LIMIT entries.
+//
+//	Every completed call is appended to the store selected by CALL_LOG_BACKEND
+//	("memory" — default, in-process ring buffer of CALL_LOG_MAX entries; or
+//	"redis" — any Redis-compatible server via CALL_LOG_REDIS_URL). The
+//	supervisor snapshot includes the most-recent CALL_LOG_LIMIT entries.
 //
 // Environment variables (see .env.example):
 //
@@ -47,6 +48,7 @@
 //	STT_PROVIDER           STT provider name (default: elevenlabs)
 //	STT_API_KEY            STT API key (optional if pre-configured in VoiceBlender)
 //	ANSWER_CODECS          Comma-separated codec preference order for inbound early-media + answer SDP, e.g. "opus,PCMA,PCMU". The first one the caller offered wins; if none match, the server's default order is used. (default: unset)
+//	SUPERVISOR_CALLER_MASK Privacy mask for caller numbers on the supervisor view. "last4" (default) preserves only the last 4 digits; "hidden" replaces with "caller"; "full" disables masking. Agent panel always sees the real number.
 //	SLA_THRESHOLD          Service-level threshold for KPI tile (default: 20s)
 //	METRICS_WINDOW         Rolling window for KPI averages and counts (default: 30m)
 //	SUPERVISOR_PASSWORD    Static password to access the supervisor panel (default: unset, no auth)
@@ -81,19 +83,20 @@ var indexHTML []byte
 var agentHTML []byte
 
 type app struct {
-	client        *voiceblender.Client
-	log           *slog.Logger
-	holdMusicURL  string
-	announceEvery time.Duration
-	ttsVoice      string
-	ttsProvider   string
-	ttsAPIKey     string
-	sttLanguage   string
-	sttProvider   string
-	sttAPIKey     string
-	answerCodecs  []string // codec preference order for inbound answer
-	slaThreshold  time.Duration
-	metricsWindow time.Duration
+	client         *voiceblender.Client
+	log            *slog.Logger
+	holdMusicURL   string
+	announceEvery  time.Duration
+	ttsVoice       string
+	ttsProvider    string
+	ttsAPIKey      string
+	sttLanguage    string
+	sttProvider    string
+	sttAPIKey      string
+	answerCodecs   []string // codec preference order for inbound answer
+	supervisorMask string   // caller-number mask mode for the supervisor view
+	slaThreshold   time.Duration
+	metricsWindow  time.Duration
 
 	reg            *registry
 	agents         *agentRegistry
@@ -152,23 +155,24 @@ func main() {
 	defer callLog.Close()
 
 	a := &app{
-		client:        voiceblender.New(voiceblender.WithBaseURL(baseURL)),
-		log:           log,
-		holdMusicURL:  holdMusicURL,
-		announceEvery: interval,
-		ttsVoice:      envOr("TTS_VOICE", "Rachel"),
-		ttsProvider:   envOr("TTS_PROVIDER", "elevenlabs"),
-		ttsAPIKey:     os.Getenv("TTS_API_KEY"),
-		sttLanguage:   envOr("STT_LANGUAGE", "en"),
-		sttProvider:   envOr("STT_PROVIDER", "elevenlabs"),
-		sttAPIKey:     os.Getenv("STT_API_KEY"),
-		answerCodecs:  splitCSV(os.Getenv("ANSWER_CODECS")),
-		slaThreshold:  slaThreshold,
-		metricsWindow: metricsWindow,
-		reg:           newRegistry(),
-		agents:        newAgentRegistry(),
-		callLog:       callLog,
-		transcripts:   newTranscriptStore(),
+		client:         voiceblender.New(voiceblender.WithBaseURL(baseURL)),
+		log:            log,
+		holdMusicURL:   holdMusicURL,
+		announceEvery:  interval,
+		ttsVoice:       envOr("TTS_VOICE", "Rachel"),
+		ttsProvider:    envOr("TTS_PROVIDER", "elevenlabs"),
+		ttsAPIKey:      os.Getenv("TTS_API_KEY"),
+		sttLanguage:    envOr("STT_LANGUAGE", "en"),
+		sttProvider:    envOr("STT_PROVIDER", "elevenlabs"),
+		sttAPIKey:      os.Getenv("STT_API_KEY"),
+		answerCodecs:   splitCSV(os.Getenv("ANSWER_CODECS")),
+		supervisorMask: resolveMaskMode(os.Getenv("SUPERVISOR_CALLER_MASK")),
+		slaThreshold:   slaThreshold,
+		metricsWindow:  metricsWindow,
+		reg:            newRegistry(),
+		agents:         newAgentRegistry(),
+		callLog:        callLog,
+		transcripts:    newTranscriptStore(),
 		auth: authConfig{
 			SupervisorPassword: os.Getenv("SUPERVISOR_PASSWORD"),
 			AgentPassword:      os.Getenv("AGENT_PASSWORD"),
@@ -781,7 +785,12 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 			"logged_in_at": ag.LoggedInAt,
 		}
 		if call := a.reg.callAnsweredBy(ag.ID); call != nil {
-			entry["current_call"] = call
+			// Mask the caller number in the agent's "current call" column
+			// the same way as the active-call list — privacy applies to
+			// every supervisor-side surface uniformly.
+			masked := *call
+			masked.From = maskCaller(masked.From, a.supervisorMask)
+			entry["current_call"] = masked
 		}
 		enriched[i] = entry
 	}
@@ -791,24 +800,29 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 		a.log.Warn("call log list", "error", err)
 		logEntries = nil
 	}
+	// Mask historical caller numbers. callLog.List returns a fresh slice
+	// for both backends, so mutating it in place is safe.
+	for i := range logEntries {
+		logEntries[i].From = maskCaller(logEntries[i].From, a.supervisorMask)
+	}
 	// Decorate active in_call rows with their running transcript so the
 	// supervisor's modal can re-render straight off the snapshot. Other
 	// states have no transcript yet, so they pass through unchanged.
 	calls := make([]map[string]any, len(snap.Calls))
 	for i, c := range snap.Calls {
 		row := map[string]any{
-			"leg_id":                c.LegID,
-			"from":                  c.From,
-			"to":                    c.To,
-			"state":                 c.State,
-			"position":              c.Position,
-			"started_at":            c.StartedAt,
-			"room_id":               c.RoomID,
-			"answered_by_agent_id":  c.AnsweredByAgentID,
-			"answered_by_name":      c.AnsweredByName,
-			"answered_agent_leg":    c.AnsweredAgentLeg,
-			"answered_at":           c.AnsweredAt,
-			"on_hold":               c.OnHold,
+			"leg_id":               c.LegID,
+			"from":                 maskCaller(c.From, a.supervisorMask),
+			"to":                   c.To,
+			"state":                c.State,
+			"position":             c.Position,
+			"started_at":           c.StartedAt,
+			"room_id":              c.RoomID,
+			"answered_by_agent_id": c.AnsweredByAgentID,
+			"answered_by_name":     c.AnsweredByName,
+			"answered_agent_leg":   c.AnsweredAgentLeg,
+			"answered_at":          c.AnsweredAt,
+			"on_hold":              c.OnHold,
 		}
 		if c.State == "in_call" {
 			row["transcript"] = a.transcripts.Get(c.LegID)
@@ -1083,6 +1097,16 @@ func (a *app) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 
 	log := a.log.With("agent_id", ag.ID, "name", ag.Name)
 	log.Info("agent stream connected")
+
+	// Cancel any pending grace-period removal from a previous WS — the
+	// agent is back. On exit, schedule a fresh removal; if the browser
+	// reconnects in time the timer is cancelled, otherwise the agent
+	// drops off the supervisor's roster automatically.
+	a.agents.cancelRemove(ag.ID)
+	defer func() {
+		a.agents.scheduleRemove(ag.ID)
+		log.Info("agent stream disconnected; scheduled removal", "grace", agentRemoveGrace)
+	}()
 
 	sub := a.reg.subscribe()
 	defer a.reg.unsubscribe(sub)

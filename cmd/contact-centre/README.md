@@ -125,6 +125,20 @@ Open the operator panel at <http://localhost:8090/> and the agent panel at <http
 13. Click **Mute** in the row, or the **✕** in the pill — mic is muted, pill returns to `listening`; agent no longer hears you; caller is undisturbed throughout. Click **Whisper** again to un-mute — no permission prompt this time.
 14. With a second supervisor tab, listen + whisper to the same call. Both whisperers' mic audio mixes for the agent. Each supervisor's mute toggle is independent.
 
+### Caller-number privacy
+
+Supervisors don't need to see full caller numbers to do their job, and a typical contact centre is bound by privacy / data-protection rules that say they shouldn't. By default the supervisor view (active calls, call log, transcript modal, agent roster) masks every caller number — the agent panel always sees the real number, since the agent is the one handling the call.
+
+`SUPERVISOR_CALLER_MASK` controls the mode:
+
+| Value | Effect | Example (`+447700900123`) |
+|---|---|---|
+| `last4` *(default)* | keep only the last 4 digits | `+********0123` |
+| `hidden` | replace the user part with `caller` | `caller` |
+| `full` | disable masking | `+447700900123` |
+
+Masking is applied server-side in `supervisorSnapshot`, so it survives WebSocket reconnects, the call-log Redis backend, and the JS render path — there's no client-side bypass.
+
 ### Authentication
 
 Both panels can be gated behind a static password. Set `SUPERVISOR_PASSWORD` and/or `AGENT_PASSWORD` (independently — either side stays open if its variable is empty). When a password is configured, the panel redirects unauthenticated visitors to `/login?role=…`; on success the server issues a 12-hour rolling session cookie (`cc_supervisor` or `cc_agent`) and the underlying WebSocket inherits it (modern browsers include cookies on same-origin upgrades).

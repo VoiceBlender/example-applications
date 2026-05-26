@@ -18,14 +18,27 @@ type agent struct {
 	WebRTCLegID string    `json:"webrtc_leg_id,omitempty"`
 }
 
+// agentRemoveGrace is how long an agent stays in the registry after
+// their WebSocket disconnects before being auto-removed. The grace
+// absorbs brief flaps (page reload, transient network hiccup) without
+// churning the supervisor's roster; a truly-gone agent (closed tab,
+// killed laptop) disappears after the grace expires.
+const agentRemoveGrace = 15 * time.Second
+
 type agentRegistry struct {
-	mu     sync.Mutex
-	by     map[string]*agent
-	notify func() // called after every mutation; lets subscribers refresh
+	mu            sync.Mutex
+	by            map[string]*agent
+	pendingRemove map[string]*time.Timer
+	removeAfter   time.Duration // grace window; 0 disables auto-removal
+	notify        func()        // called after every mutation; lets subscribers refresh
 }
 
 func newAgentRegistry() *agentRegistry {
-	return &agentRegistry{by: make(map[string]*agent)}
+	return &agentRegistry{
+		by:            make(map[string]*agent),
+		pendingRemove: make(map[string]*time.Timer),
+		removeAfter:   agentRemoveGrace,
+	}
 }
 
 // onChange installs a callback fired after every login/logout/leg change.
@@ -75,12 +88,56 @@ func (r *agentRegistry) login(name string) (*agent, bool) {
 
 func (r *agentRegistry) logout(id string) {
 	r.mu.Lock()
+	if t, ok := r.pendingRemove[id]; ok {
+		t.Stop()
+		delete(r.pendingRemove, id)
+	}
 	_, existed := r.by[id]
 	delete(r.by, id)
 	r.mu.Unlock()
 	if existed {
 		r.fireNotify()
 	}
+}
+
+// scheduleRemove arms a timer that removes the agent after removeAfter.
+// If a timer is already pending it's replaced. Called from the agent
+// WebSocket's close handler so that closing the browser tab takes the
+// agent off the supervisor's roster a few seconds later — long enough
+// to ride out a quick reconnect, short enough that ghosts don't linger.
+func (r *agentRegistry) scheduleRemove(id string) {
+	if id == "" || r.removeAfter <= 0 {
+		return
+	}
+	r.mu.Lock()
+	if t, ok := r.pendingRemove[id]; ok {
+		t.Stop()
+	}
+	r.pendingRemove[id] = time.AfterFunc(r.removeAfter, func() {
+		r.mu.Lock()
+		delete(r.pendingRemove, id)
+		_, existed := r.by[id]
+		delete(r.by, id)
+		r.mu.Unlock()
+		if existed {
+			r.fireNotify()
+		}
+	})
+	r.mu.Unlock()
+}
+
+// cancelRemove stops a pending removal — called when the agent's WS
+// (re)connects within the grace window.
+func (r *agentRegistry) cancelRemove(id string) {
+	if id == "" {
+		return
+	}
+	r.mu.Lock()
+	if t, ok := r.pendingRemove[id]; ok {
+		t.Stop()
+		delete(r.pendingRemove, id)
+	}
+	r.mu.Unlock()
 }
 
 func (r *agentRegistry) get(id string) (*agent, bool) {

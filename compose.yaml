@@ -87,6 +87,12 @@ services:
       # offered; if none match (or empty) VoiceBlender uses its default
       # order. Valid names: PCMU, PCMA, G722, opus.
       ANSWER_CODECS: "${ANSWER_CODECS:-}"
+      # Privacy mask for caller numbers on the supervisor's view (only
+      # — the agent panel always sees the real number). Modes:
+      #   last4  keep only the last 4 digits, e.g. +********0123 (default)
+      #   hidden replace the user part with "caller"
+      #   full   disable masking (development / debugging)
+      SUPERVISOR_CALLER_MASK: "${SUPERVISOR_CALLER_MASK:-last4}"
 
       # ----------------------------------------------------- TTS ----------
       TTS_VOICE: "Rachel"
