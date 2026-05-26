@@ -20,10 +20,11 @@ type LogEntry struct {
 	//   "abandoned"  – caller hung up before an agent answered
 	//   "answered"   – an agent took the call (it then ended for any reason)
 	//   "failed"     – call never made it past the waiting room (no answer / error)
-	Outcome    string           `json:"outcome"`
-	AgentID    string           `json:"agent_id,omitempty"`
-	AgentName  string           `json:"agent_name,omitempty"`
-	Transcript []TranscriptLine `json:"transcript,omitempty"`
+	Outcome         string           `json:"outcome"`
+	AgentID         string           `json:"agent_id,omitempty"`
+	AgentName       string           `json:"agent_name,omitempty"`
+	TransferredFrom string           `json:"transferred_from,omitempty"`
+	Transcript      []TranscriptLine `json:"transcript,omitempty"`
 }
 
 // newLogEntry builds a LogEntry from the registry's last view of a call,
@@ -46,6 +47,9 @@ func newLogEntry(c *callView, transcript []TranscriptLine) LogEntry {
 		e.Outcome = "answered"
 	} else {
 		e.Outcome = "abandoned"
+	}
+	if c.transferredFrom != "" {
+		e.TransferredFrom = c.transferredFrom
 	}
 	return e
 }

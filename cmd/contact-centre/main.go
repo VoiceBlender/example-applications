@@ -51,6 +51,7 @@
 //	SUPERVISOR_CALLER_MASK Privacy mask for caller numbers on the supervisor view. "last4" (default) preserves only the last 4 digits; "hidden" replaces with "caller"; "full" disables masking. Agent panel always sees the real number.
 //	SLA_THRESHOLD          Service-level threshold for KPI tile (default: 20s)
 //	METRICS_WINDOW         Rolling window for KPI averages and counts (default: 30m)
+//	TRANSFER_RING_TIMEOUT  How long a blind transfer rings before auto-fail (default: 30s)
 //	SUPERVISOR_PASSWORD    Static password to access the supervisor panel (default: unset, no auth)
 //	AGENT_PASSWORD         Static password to access the agent panel (default: unset, no auth)
 package main
@@ -98,11 +99,17 @@ type app struct {
 	slaThreshold   time.Duration
 	metricsWindow  time.Duration
 
-	reg            *registry
-	agents         *agentRegistry
-	callLog        LogStore
-	transcripts    *transcriptStore
-	supervisorLegs sync.Map // legID (string) -> struct{}
+	reg                   *registry
+	agents                *agentRegistry
+	callLog               LogStore
+	transcripts           *transcriptStore
+	supervisorLegs        sync.Map // legID (string) -> struct{}
+	supervisors           *supervisorRegistry
+	intercoms             *intercomRegistry
+	transfers             *transferRegistry
+	agentOutboxes         sync.Map      // agentID (string) -> chan<- any (latest live WS only)
+	supervisorActiveCalls sync.Map      // *supervisorSession -> string (customer leg id) for transferred-to-supervisor calls
+	transferTimeout       time.Duration // TRANSFER_RING_TIMEOUT
 
 	auth     authConfig
 	sessions *sessionStore
@@ -145,6 +152,7 @@ func main() {
 
 	slaThreshold := parseDurationOr(log, "SLA_THRESHOLD", "20s", 20*time.Second)
 	metricsWindow := parseDurationOr(log, "METRICS_WINDOW", "30m", 30*time.Minute)
+	transferRingTimeout := parseDurationOr(log, "TRANSFER_RING_TIMEOUT", "30s", 30*time.Second)
 
 	callLogMax := envInt("CALL_LOG_MAX", 200)
 	callLog, callLogBackend, err := makeCallLog(context.Background(), callLogMax)
@@ -155,24 +163,28 @@ func main() {
 	defer callLog.Close()
 
 	a := &app{
-		client:         voiceblender.New(voiceblender.WithBaseURL(baseURL)),
-		log:            log,
-		holdMusicURL:   holdMusicURL,
-		announceEvery:  interval,
-		ttsVoice:       envOr("TTS_VOICE", "Rachel"),
-		ttsProvider:    envOr("TTS_PROVIDER", "elevenlabs"),
-		ttsAPIKey:      os.Getenv("TTS_API_KEY"),
-		sttLanguage:    envOr("STT_LANGUAGE", "en"),
-		sttProvider:    envOr("STT_PROVIDER", "elevenlabs"),
-		sttAPIKey:      os.Getenv("STT_API_KEY"),
-		answerCodecs:   splitCSV(os.Getenv("ANSWER_CODECS")),
-		supervisorMask: resolveMaskMode(os.Getenv("SUPERVISOR_CALLER_MASK")),
-		slaThreshold:   slaThreshold,
-		metricsWindow:  metricsWindow,
-		reg:            newRegistry(),
-		agents:         newAgentRegistry(),
-		callLog:        callLog,
-		transcripts:    newTranscriptStore(),
+		client:          voiceblender.New(voiceblender.WithBaseURL(baseURL)),
+		log:             log,
+		holdMusicURL:    holdMusicURL,
+		announceEvery:   interval,
+		ttsVoice:        envOr("TTS_VOICE", "Rachel"),
+		ttsProvider:     envOr("TTS_PROVIDER", "elevenlabs"),
+		ttsAPIKey:       os.Getenv("TTS_API_KEY"),
+		sttLanguage:     envOr("STT_LANGUAGE", "en"),
+		sttProvider:     envOr("STT_PROVIDER", "elevenlabs"),
+		sttAPIKey:       os.Getenv("STT_API_KEY"),
+		answerCodecs:    splitCSV(os.Getenv("ANSWER_CODECS")),
+		supervisorMask:  resolveMaskMode(os.Getenv("SUPERVISOR_CALLER_MASK")),
+		slaThreshold:    slaThreshold,
+		metricsWindow:   metricsWindow,
+		reg:             newRegistry(),
+		agents:          newAgentRegistry(),
+		callLog:         callLog,
+		transcripts:     newTranscriptStore(),
+		supervisors:     newSupervisorRegistry(),
+		intercoms:       newIntercomRegistry(),
+		transfers:       newTransferRegistry(),
+		transferTimeout: transferRingTimeout,
 		auth: authConfig{
 			SupervisorPassword: os.Getenv("SUPERVISOR_PASSWORD"),
 			AgentPassword:      os.Getenv("AGENT_PASSWORD"),
@@ -181,6 +193,10 @@ func main() {
 	}
 	// Agent login/logout/leg-changes should also wake supervisor panels.
 	a.agents.onChange(a.reg.NotifyChanged)
+	// Supervisor presence changes refresh the agent panels (so the
+	// "Call supervisor" dropdown gains/loses entries live) and supervisor
+	// panels (in case they ever display a presence list themselves).
+	a.supervisors.onChange(a.reg.NotifyChanged)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
@@ -491,29 +507,75 @@ func (a *app) bridgeAndMonitor(ctx context.Context, log *slog.Logger, leg *voice
 		}
 	}()
 
-	// Watch the agent's WebRTC leg for disconnect.
+	// Watch the agent's WebRTC leg for disconnect. The subscription is
+	// swappable: a successful transfer pushes a transferOutcome on the
+	// call's transferSignal, after which we close the old sub and open
+	// one for the new agent leg without restarting the goroutine.
 	agentSub := a.client.Leg(bridge.AnsweredAgentLeg).Subscribe(voiceblender.EventLegDisconnected)
-	defer agentSub.Close()
+	transferSig := a.reg.transferChan(leg.ID)
 
 	for {
 		select {
 		case <-ctx.Done():
+			agentSub.Close()
 			return
 
 		case ev := <-sub.Events():
 			if d, ok := ev.(*voiceblender.LegDisconnectedEvent); ok {
 				log.Info("caller hung up on bridged call", "reason", d.Cdr.Reason)
+				agentSub.Close()
+				// Fail any in-flight transfer so the target's modal closes
+				// and the original agent sees a clear end-reason.
+				a.failTransferOnCustomerHangup(leg.ID, log)
 				return
 			}
 
 		case ev := <-agentSub.Events():
 			if _, ok := ev.(*voiceblender.LegDisconnectedEvent); ok {
+				// Attended-transfer race #1: a transfer is in flight for
+				// this call. If we're still consulting, this disconnect
+				// means the original agent left the consult — that's our
+				// completion trigger. Otherwise (cancelled / completed /
+				// failed mid-finalize) the disconnect is just consult-
+				// room teardown noise; the post-finalize bridge-end
+				// cleanup will run via transferSignal or the failure
+				// path is already restoring the caller.
+				if t := a.transfers.ByCall(leg.ID); t != nil {
+					if t.State == transferConsulting {
+						go a.completeAttendedTransfer(context.Background(), t.ID, log)
+					}
+					continue
+				}
+				// Attended-transfer race #2: a transfer already swapped
+				// the agent under us — this disconnect is for the former
+				// leg. Wait for the transferSignal that's already in
+				// flight (or just on its way).
+				if cur := a.reg.lookup(leg.ID); cur != nil && cur.AnsweredAgentLeg != bridge.AnsweredAgentLeg {
+					continue
+				}
 				log.Info("agent dropped on bridged call — hanging up caller")
 				if _, err := leg.Hangup(context.Background(), voiceblender.DeleteLegRequest{}); err != nil && !voiceblender.IsNotFound(err) {
 					log.Warn("hangup caller after agent drop", "error", err)
 				}
+				agentSub.Close()
 				return
 			}
+
+		case out, ok := <-transferSig:
+			if !ok {
+				transferSig = nil
+				continue
+			}
+			// Transfer completed — swap our agent-leg subscription.
+			log.Info("transfer completed; swapping agent leg watcher",
+				"old_leg", bridge.AnsweredAgentLeg, "new_leg", out.NewAgentLeg, "new_agent", out.NewAgentName)
+			agentSub.Close()
+			agentSub = a.client.Leg(out.NewAgentLeg).Subscribe(voiceblender.EventLegDisconnected)
+			// Update local view so logs reflect the new agent.
+			bridge.AnsweredAgentLeg = out.NewAgentLeg
+			bridge.AnsweredByName = out.NewAgentName
+			bridge.AnsweredByAgentID = out.NewAgentID
+			log = log.With("agent", out.NewAgentName, "agent_leg_id", out.NewAgentLeg)
 		}
 	}
 }
@@ -724,16 +786,34 @@ func (a *app) handleCallsStream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	log := a.log.With("kind", "supervisor")
+	// Derive the supervisor's display identity from the auth session,
+	// when one exists. Falls back to "supervisor" so the intercom
+	// feature stays usable when SUPERVISOR_PASSWORD is unset.
+	username := supervisorUsernameFromRequest(a, r)
+
+	log := a.log.With("kind", "supervisor", "username", username)
 	log.Info("supervisor stream connected")
 
 	sess := &supervisorSession{}
 	outbox := make(chan any, 16)
 
+	// Register presence so the agent panel's dropdown picks us up and
+	// so the intercom pump can fan messages out to us by username.
+	presence := &supervisorPresence{Session: sess, Username: username, Outbox: outbox}
+	a.supervisors.Add(presence)
+	defer a.supervisors.Remove(sess)
+
 	sub := a.reg.subscribe()
 	defer a.reg.unsubscribe(sub)
 
-	go a.readSupervisorMessages(ctx, cancel, c, sess, outbox, log)
+	// On WS close, end any intercom this session was involved in
+	// (incoming-modal targets get cleared; an answered intercom drops).
+	defer a.cleanupIntercomsOnSupervisorDisconnect(presence)
+	// Same for transfers: fail ringing-to-this-username with no other
+	// tabs left; hang up any answered transferred customer call.
+	defer a.cleanupTransfersOnSupervisorDisconnect(presence)
+
+	go a.readSupervisorMessages(ctx, cancel, c, sess, presence, outbox, log)
 
 	// Tear down any leg this session created when the WS closes.
 	defer func() {
@@ -771,6 +851,29 @@ func (a *app) handleCallsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// roomStillExists reports whether roomID corresponds to a live customer
+// call (in `calls`) or an active intercom. Used by the supervisor
+// snapshot to scrub a stale session room reference when the call /
+// intercom it pointed at has ended.
+func (a *app) roomStillExists(roomID string, calls []callView) bool {
+	if roomID == "" {
+		return false
+	}
+	for _, c := range calls {
+		if c.RoomID == roomID {
+			return true
+		}
+	}
+	a.intercoms.mu.Lock()
+	defer a.intercoms.mu.Unlock()
+	for _, ic := range a.intercoms.byID {
+		if ic.RoomID == roomID {
+			return true
+		}
+	}
+	return false
+}
+
 // supervisorSnapshot builds the supervisor view: every active call, every
 // logged-in agent (with their current call denormalized in), and the
 // listening state of this particular supervisor session.
@@ -795,6 +898,14 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 		enriched[i] = entry
 	}
 	_, roomID := sess.get()
+	// If the room the session believes it's in no longer exists (the call
+	// ended, or the intercom was torn down), clear the stale id so the
+	// client's listen pill returns to "not listening" instead of churning
+	// through "connecting" → "audio failed" when the PC eventually notices.
+	if roomID != "" && !a.roomStillExists(roomID, snap.Calls) {
+		sess.setRoom("")
+		roomID = ""
+	}
 	logEntries, err := a.callLog.List(context.Background(), 100)
 	if err != nil {
 		a.log.Warn("call log list", "error", err)
@@ -830,6 +941,65 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 		calls[i] = row
 	}
 	metrics := computeMetrics(snap.Calls, logEntries, snap.At, a.metricsWindow, a.slaThreshold)
+	self := map[string]any{"listening_room_id": roomID}
+	// Surface an active transferred customer call (if any) so the
+	// supervisor's topbar pill repaints after a WS reconnect.
+	if v, ok := a.supervisorActiveCalls.Load(sess); ok {
+		if callLegID, _ := v.(string); callLegID != "" {
+			if c := a.reg.lookup(callLegID); c != nil {
+				self["transferred_call"] = map[string]any{
+					"call_leg_id": callLegID,
+					"caller_from": maskCaller(c.From, a.supervisorMask),
+				}
+			}
+		}
+	}
+	// Surface this session's active attended-transfer consult (if any)
+	// so the topbar pill re-paints after a WS reconnect. The session is
+	// in a consult when its leg matches a consulting transfer's TargetLegID.
+	if legID, _ := sess.get(); legID != "" {
+		a.transfers.mu.Lock()
+		for _, t := range a.transfers.byID {
+			if t.State == transferConsulting && t.TargetKind == intercomTargetSupervisor && t.TargetLegID == legID {
+				var callerFrom string
+				if c := a.reg.lookup(t.CallLegID); c != nil {
+					callerFrom = maskCaller(c.From, a.supervisorMask)
+				}
+				self["consulting"] = map[string]any{
+					"transfer_id":   t.ID,
+					"from_agent_id": t.FromAgentID,
+					"from_name":     t.FromName,
+					"caller_from":   callerFrom,
+				}
+				break
+			}
+		}
+		a.transfers.mu.Unlock()
+	}
+	// Surface this session's active intercom (if any) so the topbar
+	// pill re-paints correctly after a WS reconnect. Looked up by the
+	// session's WebRTC leg id — that's the supervisor side of the
+	// intercom-room bridge.
+	if legID, _ := sess.get(); legID != "" {
+		// Walk all intercoms (small set) once to find the one whose
+		// CalleeLeg matches this session — that's the supervisor side
+		// of the intercom bridge.
+		a.intercoms.mu.Lock()
+		for _, ic := range a.intercoms.byID {
+			if ic.State == intercomActive && ic.CalleeLeg == legID {
+				self["intercom"] = map[string]any{
+					"intercom_id": ic.ID,
+					"agent_id":    ic.AgentID,
+					"agent_name":  ic.AgentName,
+					"state":       ic.State,
+					"started_at":  ic.StartedAt,
+					"answered_at": ic.AnsweredAt,
+				}
+				break
+			}
+		}
+		a.intercoms.mu.Unlock()
+	}
 	return map[string]any{
 		"type":     "snapshot",
 		"calls":    calls,
@@ -838,20 +1008,22 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 		"agents":   enriched,
 		"call_log": logEntries,
 		"metrics":  metrics,
-		"self":     map[string]any{"listening_room_id": roomID},
+		"self":     self,
 	}
 }
 
 // readSupervisorMessages drives the supervisor WS reader: WebRTC signaling
-// plus listen.start / listen.stop.
-func (a *app) readSupervisorMessages(ctx context.Context, cancel context.CancelFunc, c *websocket.Conn, sess *supervisorSession, outbox chan<- any, log *slog.Logger) {
+// plus listen.start / listen.stop plus intercom answer / reject / hangup.
+func (a *app) readSupervisorMessages(ctx context.Context, cancel context.CancelFunc, c *websocket.Conn, sess *supervisorSession, presence *supervisorPresence, outbox chan<- any, log *slog.Logger) {
 	defer cancel()
 	for {
 		var msg struct {
-			Type      string                        `json:"type"`
-			SDP       string                        `json:"sdp,omitempty"`
-			Candidate voiceblender.ICECandidateInit `json:"candidate,omitempty"`
-			RoomID    string                        `json:"room_id,omitempty"`
+			Type       string                        `json:"type"`
+			SDP        string                        `json:"sdp,omitempty"`
+			Candidate  voiceblender.ICECandidateInit `json:"candidate,omitempty"`
+			RoomID     string                        `json:"room_id,omitempty"`
+			IntercomID string                        `json:"intercom_id,omitempty"`
+			TransferID string                        `json:"transfer_id,omitempty"`
 		}
 		if err := wsjson.Read(ctx, c, &msg); err != nil {
 			return
@@ -867,6 +1039,18 @@ func (a *app) readSupervisorMessages(ctx context.Context, cancel context.CancelF
 			a.handleSupervisorListenStart(ctx, sess, msg.RoomID, outbox, log)
 		case "listen.stop":
 			a.handleSupervisorListenStop(ctx, sess, log)
+		case "intercom.answer":
+			a.handleSupervisorIntercomAnswer(ctx, sess, presence, msg.IntercomID, outbox, log)
+		case "intercom.reject":
+			a.handleSupervisorIntercomReject(ctx, presence, msg.IntercomID, log)
+		case "intercom.hangup":
+			a.handleSupervisorIntercomHangup(ctx, sess, msg.IntercomID, log)
+		case "transfer.answer":
+			a.handleSupervisorTransferAnswer(ctx, sess, presence, msg.TransferID, outbox, log)
+		case "transfer.reject":
+			a.handleSupervisorTransferReject(ctx, presence, msg.TransferID, log)
+		case "transfer.hangup":
+			a.handleSupervisorTransferEnd(ctx, sess, msg.TransferID, log)
 		default:
 			log.Debug("ignored supervisor ws message", "type", msg.Type)
 		}
@@ -1116,6 +1300,23 @@ func (a *app) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 	// writers, and one writer keeps message ordering deterministic.
 	outbox := make(chan any, 16)
 
+	// Make the outbox addressable from outside this handler so the
+	// intercom flow can push ad-hoc events to this agent. Latest WS
+	// wins on reconnect; cleared on disconnect. NotifyChanged so
+	// other agents' intercom dropdowns add/remove this agent live.
+	a.agentOutboxes.Store(ag.ID, (chan<- any)(outbox))
+	a.reg.NotifyChanged()
+	defer func() {
+		a.agentOutboxes.Delete(ag.ID)
+		a.reg.NotifyChanged()
+	}()
+
+	// On WS close, end any intercom this agent is involved in so the
+	// supervisor side sees `intercom.ended` with `agent_disconnected`.
+	defer a.cleanupIntercomsOnAgentDisconnect(ag.ID)
+	// Same for transfers: cancel any they own; fail any they're the target of.
+	defer a.cleanupTransfersOnAgentDisconnect(ag.ID)
+
 	// Reader: parse incoming WS messages and turn them into actions.
 	go a.readAgentMessages(ctx, cancel, c, ag, outbox, log)
 
@@ -1156,12 +1357,80 @@ func (a *app) handleAgentStream(w http.ResponseWriter, r *http.Request) {
 // "on call" card without needing a separate message type.
 func (a *app) agentSnapshotFor(agentID string) map[string]any {
 	snap := a.reg.queueSnapshot()
+	self := map[string]any{"current_call": a.reg.callAnsweredBy(agentID)}
+	// Surface this agent's active intercom (if any) so the panel's
+	// intercom pill re-paints after a WS reconnect without waiting for
+	// the next push.
+	if ic := a.intercoms.ByAgent(agentID); ic != nil {
+		self["intercom"] = map[string]any{
+			"intercom_id": ic.ID,
+			"target_kind": ic.TargetKind,
+			"target":      ic.Target,
+			"target_name": ic.TargetName,
+			"state":       ic.State,
+			"started_at":  ic.StartedAt,
+			"answered_at": ic.AnsweredAt,
+		}
+	}
+	// In-flight transfer this agent initiated — survives reconnect.
+	if t := a.transfers.ByFromAgent(agentID); t != nil {
+		self["transfer"] = map[string]any{
+			"transfer_id": t.ID,
+			"state":       t.State,
+			"target_kind": t.TargetKind,
+			"target":      t.Target,
+			"target_name": t.TargetName,
+			"attended":    t.Attended,
+			"started_at":  t.StartedAt,
+		}
+	}
+	// Attended-transfer consult this agent is the target of — survives reconnect.
+	for _, t := range a.transfers.ByTarget(intercomTargetAgent, agentID) {
+		if t.State != transferConsulting {
+			continue
+		}
+		var callerFrom string
+		if c := a.reg.lookup(t.CallLegID); c != nil {
+			callerFrom = c.From
+		}
+		self["consulting"] = map[string]any{
+			"transfer_id":   t.ID,
+			"from_agent_id": t.FromAgentID,
+			"from_name":     t.FromName,
+			"caller_from":   callerFrom,
+		}
+		break
+	}
+	// Build the "other agents currently connected" list for the
+	// intercom dropdown. We include only agents with an active WS
+	// (i.e. an outbox in a.agentOutboxes) so calls don't ring an
+	// agent who's already gone, and we exclude self.
+	others := make([]map[string]any, 0)
+	for _, peer := range a.agents.list() {
+		if peer.ID == agentID {
+			continue
+		}
+		if _, online := a.agentOutboxes.Load(peer.ID); !online {
+			continue
+		}
+		// Also exclude agents currently on a customer call — they
+		// can't accept an intercom anyway.
+		if a.reg.callAnsweredBy(peer.ID) != nil {
+			continue
+		}
+		others = append(others, map[string]any{
+			"agent_id": peer.ID,
+			"name":     peer.Name,
+		})
+	}
 	env := map[string]any{
-		"type":  "snapshot",
-		"calls": snap.Calls,
-		"stats": snap.Stats,
-		"at":    snap.At,
-		"self":  map[string]any{"current_call": a.reg.callAnsweredBy(agentID)},
+		"type":        "snapshot",
+		"calls":       snap.Calls,
+		"stats":       snap.Stats,
+		"at":          snap.At,
+		"self":        self,
+		"supervisors": a.supervisors.UsernamesOnline(),
+		"agents":      others,
 	}
 	return env
 }
@@ -1177,10 +1446,15 @@ func (a *app) readAgentMessages(ctx context.Context, cancel context.CancelFunc, 
 	defer cancel() // a read error tears down the whole session
 	for {
 		var msg struct {
-			Type      string                        `json:"type"`
-			SDP       string                        `json:"sdp,omitempty"`
-			Candidate voiceblender.ICECandidateInit `json:"candidate,omitempty"`
-			LegID     string                        `json:"leg_id,omitempty"`
+			Type       string                        `json:"type"`
+			SDP        string                        `json:"sdp,omitempty"`
+			Candidate  voiceblender.ICECandidateInit `json:"candidate,omitempty"`
+			LegID      string                        `json:"leg_id,omitempty"`
+			TargetKind string                        `json:"target_kind,omitempty"`
+			Target     string                        `json:"target,omitempty"`
+			IntercomID string                        `json:"intercom_id,omitempty"`
+			TransferID string                        `json:"transfer_id,omitempty"`
+			Attended   bool                          `json:"attended,omitempty"`
 		}
 		if err := wsjson.Read(ctx, c, &msg); err != nil {
 			return
@@ -1200,6 +1474,24 @@ func (a *app) readAgentMessages(ctx context.Context, cancel context.CancelFunc, 
 			a.handleAgentCallHold(ctx, ag, outbox, log)
 		case "call.resume":
 			a.handleAgentCallResume(ctx, ag, outbox, log)
+		case "intercom.call":
+			a.handleAgentIntercomCall(ctx, ag, msg.TargetKind, msg.Target, outbox, log)
+		case "intercom.answer":
+			a.handleAgentIntercomAnswer(ctx, ag, msg.IntercomID, outbox, log)
+		case "intercom.reject":
+			a.handleAgentIntercomReject(ctx, ag, msg.IntercomID, log)
+		case "intercom.hangup":
+			a.handleAgentIntercomHangup(ctx, ag, msg.IntercomID, log)
+		case "transfer.start":
+			a.handleAgentTransferStart(ctx, ag, msg.TargetKind, msg.Target, msg.Attended, outbox, log)
+		case "transfer.cancel":
+			a.handleAgentTransferCancel(ctx, ag, msg.TransferID, log)
+		case "transfer.complete":
+			a.handleAgentTransferComplete(ctx, ag, msg.TransferID, log)
+		case "transfer.answer":
+			a.handleAgentTransferAnswer(ctx, ag, msg.TransferID, outbox, log)
+		case "transfer.reject":
+			a.handleAgentTransferReject(ctx, ag, msg.TransferID, log)
 		default:
 			log.Debug("ignored ws message", "type", msg.Type)
 		}
@@ -1241,6 +1533,61 @@ func (a *app) handleAgentCallHangup(ctx context.Context, ag *agent, log *slog.Lo
 	log.Info("agent hung up caller", "caller_leg_id", call.LegID)
 }
 
+// holdCaller takes the named agent leg out of the call's room and
+// starts looping hold music. On success stores the playback id on the
+// live callView via setHold(true). Idempotent: if the call is already
+// on hold, returns the existing playback id without re-playing music.
+// Shared by handleAgentCallHold and the transfer flow.
+func (a *app) holdCaller(ctx context.Context, call *callView, agentLeg string, log *slog.Logger) (string, error) {
+	if call == nil || call.RoomID == "" {
+		return "", fmt.Errorf("bridge not ready")
+	}
+	if call.OnHold {
+		return call.holdPlaybackID, nil
+	}
+	if agentLeg == "" {
+		return "", fmt.Errorf("bridge not ready")
+	}
+	room := a.client.Room(call.RoomID)
+	if _, err := room.RemoveLeg(ctx, agentLeg); err != nil && !voiceblender.IsNotFound(err) {
+		return "", fmt.Errorf("remove agent leg: %w", err)
+	}
+	holdReq := voiceblender.PlayURL(a.holdMusicURL, "audio/mpeg")
+	holdReq.Repeat = -1
+	pb, err := room.Play(ctx, holdReq)
+	if err != nil {
+		// Best-effort: put agent back in so caller doesn't sit in silence.
+		_, _ = room.AddLeg(context.Background(), voiceblender.AddLegRequest{LegID: agentLeg, Role: "agent"})
+		return "", fmt.Errorf("play hold music: %w", err)
+	}
+	a.reg.setHold(call.LegID, true, pb.PlaybackID)
+	log.Info("call placed on hold", "caller_leg_id", call.LegID, "playback_id", pb.PlaybackID)
+	return pb.PlaybackID, nil
+}
+
+// restoreCaller reverses holdCaller: stop the music, put the named
+// agent leg back in the room as "agent". Idempotent. Shared by
+// handleAgentCallResume and the transfer-failed / cancelled paths.
+func (a *app) restoreCaller(ctx context.Context, call *callView, agentLeg string, log *slog.Logger) error {
+	if call == nil || call.RoomID == "" {
+		return fmt.Errorf("bridge not ready")
+	}
+	room := a.client.Room(call.RoomID)
+	if call.holdPlaybackID != "" {
+		if _, err := room.StopPlay(ctx, call.holdPlaybackID); err != nil && !voiceblender.IsNotFound(err) {
+			log.Warn("restore: stop hold music", "room", call.RoomID, "error", err)
+		}
+	}
+	if agentLeg != "" {
+		if _, err := room.AddLeg(ctx, voiceblender.AddLegRequest{LegID: agentLeg, Role: "agent"}); err != nil && !voiceblender.IsNotFound(err) {
+			return fmt.Errorf("re-add agent leg: %w", err)
+		}
+	}
+	a.reg.setHold(call.LegID, false, "")
+	log.Info("call restored from hold", "caller_leg_id", call.LegID)
+	return nil
+}
+
 // handleAgentCallHold removes the agent's WebRTC leg from the caller's room
 // and starts hold music in the room. The caller hears only the music; the
 // agent hears nothing (they're no longer in any mixer). The agent's own
@@ -1254,28 +1601,11 @@ func (a *app) handleAgentCallHold(ctx context.Context, ag *agent, outbox chan<- 
 	if call.OnHold {
 		return
 	}
-	if call.RoomID == "" || call.AnsweredAgentLeg == "" {
-		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "bridge not ready"})
-		return
-	}
-	room := a.client.Room(call.RoomID)
-	if _, err := room.RemoveLeg(ctx, call.AnsweredAgentLeg); err != nil && !voiceblender.IsNotFound(err) {
-		log.Warn("hold: remove agent leg from room", "room", call.RoomID, "error", err)
+	if _, err := a.holdCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
+		log.Warn("hold failed", "error", err)
 		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "hold failed"})
 		return
 	}
-	holdReq := voiceblender.PlayURL(a.holdMusicURL, "audio/mpeg")
-	holdReq.Repeat = -1
-	pb, err := room.Play(ctx, holdReq)
-	if err != nil {
-		log.Warn("hold: play music", "room", call.RoomID, "error", err)
-		// Best-effort: put agent back in so caller doesn't sit in silence.
-		_, _ = room.AddLeg(context.Background(), voiceblender.AddLegRequest{LegID: call.AnsweredAgentLeg})
-		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "hold music failed"})
-		return
-	}
-	a.reg.setHold(call.LegID, true, pb.PlaybackID)
-	log.Info("agent placed call on hold", "caller_leg_id", call.LegID, "playback_id", pb.PlaybackID)
 }
 
 // handleAgentCallResume reverses hold: stop the music, put the agent back
@@ -1289,19 +1619,11 @@ func (a *app) handleAgentCallResume(ctx context.Context, ag *agent, outbox chan<
 	if !call.OnHold {
 		return
 	}
-	room := a.client.Room(call.RoomID)
-	if call.holdPlaybackID != "" {
-		if _, err := room.StopPlay(ctx, call.holdPlaybackID); err != nil && !voiceblender.IsNotFound(err) {
-			log.Warn("resume: stop hold music", "room", call.RoomID, "error", err)
-		}
-	}
-	if _, err := room.AddLeg(ctx, voiceblender.AddLegRequest{LegID: call.AnsweredAgentLeg}); err != nil && !voiceblender.IsNotFound(err) {
-		log.Warn("resume: add agent leg to room", "room", call.RoomID, "error", err)
+	if err := a.restoreCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
+		log.Warn("resume failed", "error", err)
 		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "resume failed"})
 		return
 	}
-	a.reg.setHold(call.LegID, false, "")
-	log.Info("agent resumed call", "caller_leg_id", call.LegID)
 }
 
 func (a *app) handleAgentOffer(ctx context.Context, ag *agent, sdp string, outbox chan<- any, log *slog.Logger) {

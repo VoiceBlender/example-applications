@@ -6,8 +6,8 @@ A VoiceBlender example app that runs a complete inbound contact centre — waiti
 
 - **Inbound waiting room** with UK ringback (`gb_ringback`), welcome TTS, per-caller hold music, and live queue-position announcements (*"you are number 2 in the queue…"*).
 - **Configurable codec negotiation** — `ANSWER_CODECS` takes a preference list (`opus,PCMA,PCMU`) and the app picks the first one the caller actually offered.
-- **Agent dashboard** — username sign-in (or free name when auth is off), one-click *Take call*, mute, hold / resume, end call, log out. The WebRTC leg is established lazily on the first *Take call* and released when the call ends, so idle agents hold no media resources.
-- **Supervisor dashboard** — live call list, agent roster, *Listen* (silent monitor) and *Whisper* (un-mute to talk to the agent only), plus a rolling **Service KPIs** tile row (Service Level, ASA, AHT, Abandon Rate, Longest Wait).
+- **Agent dashboard** — username sign-in (or free name when auth is off), one-click *Take call*, mute, hold / resume, **call transfer** (blind or attended/consult — see [Call transfer](#call-transfer-blind-or-attended)) to another agent or a supervisor (customer on hold while ringing, auto-rollback on reject / timeout), end call, log out. The WebRTC leg is established lazily on the first *Take call* and released when the call ends, so idle agents hold no media resources.
+- **Supervisor dashboard** — live call list, agent roster, *Listen* (silent monitor), *Whisper* (un-mute to talk to the agent only), incoming **agent → supervisor intercom** with Answer/Reject modal, plus a rolling **Service KPIs** tile row (Service Level, ASA, AHT, Abandon Rate, Longest Wait).
 - **Live transcription** during every bridged call, attributed per speaker (customer / agent / supervisor) and rendered in a modal in both **LIVE** and **ARCHIVE** modes — the saved transcript is part of each call-log entry.
 - **Pluggable call log** — in-process ring buffer by default, Redis-backed for persistence across restarts.
 - **Optional static-password auth** for both panels with cookie sessions.
@@ -138,6 +138,57 @@ Supervisors don't need to see full caller numbers to do their job, and a typical
 | `full` | disable masking | `+447700900123` |
 
 Masking is applied server-side in `supervisorSnapshot`, so it survives WebSocket reconnects, the call-log Redis backend, and the JS render path — there's no client-side bypass.
+
+### Call transfer (blind or attended)
+
+While on a customer call, the agent can hand it off to another agent or a supervisor — click **Transfer…** on the call card, pick the target from the same Supervisors/Agents picker the intercom uses, then choose one of the two handoff modes:
+
+- **Blind** — fire-and-forget. The target's modal rings, the customer is on hold. On Answer the target takes the call over directly with no consultation step.
+- **Consult** — attended transfer. The target's modal rings (badged *Incoming consult*). On Answer the original agent and the target are bridged in a private *consult room* (customer stays on hold); the original agent's call card shows a *Consulting with `<name>`* status with a **Complete transfer** button. Clicking Complete (or simply closing the original agent's tab / WS) hands the customer over to the target; clicking Cancel rolls the customer back to the original agent.
+
+In both modes the customer hears looping hold music for the entire ring (and, for consult, the entire consultation) phase. On the final hand-off, the target's WebRTC leg replaces the original agent's leg in the customer's room, the music stops, and the original agent's panel returns to idle.
+
+End-to-end flow (shared):
+
+1. Original agent clicks Transfer → picks target → chooses Blind or Consult → server validates (target online, not on a call, not in an intercom or pending transfer) → puts the customer on hold → pushes an `intercom`-style modal to the target (attended flag carried so the modal is labelled *consult* vs *transfer*).
+2. Target sees an *Incoming transfer / consult from `<agent>` · Caller `<masked-number>`* modal with Answer / Reject (same modal CSS as the intercom; reject = Esc / click-outside).
+3. **Blind Answer** → target's WebRTC leg is added to the customer's room; the call's `AnsweredBy*` fields flip to the new party; the per-call goroutine swaps which leg it watches for disconnects; original agent's `transfer.completed` fires, their per-call teardown releases their leg.
+4. **Consult Answer** → a `consult-<id>` room is created with the original agent (role `agent`) and the target (role `supervisor`) — the default routing matrix wires those two roles both ways, so they hear each other; the customer stays on hold. Both sides receive a `transfer.consulting` push; the originator sees Complete / Cancel, the target sees a *Consulting with `<name>`* banner / pill with Hang up.
+5. **Consult Complete** (original agent clicks Complete OR the original agent's WS drops) → consult room is torn down, target's leg joins the customer room, music stops, customer is now with the target. Same end-state as a blind Answer.
+6. **Reject / Timeout / Target disconnects** (any phase) → the call rolls back: hold music stops, original agent's leg is re-added to the room, agent's card returns to active.
+7. **Cancel** (original agent, any phase) → same rollback as reject.
+8. **Customer hangs up during ring or consult** → both sides clear (`transfer.cleared` / `transfer.failed reason=customer_dropped`), call ends naturally.
+
+For a supervisor target on accept: in blind mode they get the minimal **"on call · `<caller>`"** topbar pill (with End to hang up the customer); in consult mode they get a **"consult · `<agent>` · `<caller>`"** pill (with End to hang up the consult and return the customer to the agent). Listen and Whisper are blocked while the supervisor is on a transferred call or in a consult — their WebRTC leg can only be in one room.
+
+`TRANSFER_RING_TIMEOUT` (default `30s`) controls how long the ring lasts before auto-fail. (The consult phase has no timeout — it ends when either party acts.) The call log entry for a transferred call records `transferred_from` — the original agent's name — alongside the final handler's name.
+
+### Intercom (agent → supervisor *or* agent)
+
+The agent panel has an **Intercom** widget in the topbar (visible when at least one supervisor or other agent is online and the agent is *not* on a customer call). The dropdown groups choices under "Supervisors" and "Agents":
+
+- **Supervisors** are listed by auth username (`supervisor` when `SUPERVISOR_PASSWORD` is unset). Multiple browser tabs of the same supervisor all ring together; first answer wins, others' modals dismiss.
+- **Agents** are listed by display name; this is a 1-to-1 ring to whichever agent the caller picks.
+
+What happens, end to end:
+
+1. The agent client preps its WebRTC leg (same lazy flow as *Take call* — first time prompts for the mic).
+2. Server creates a fresh `intercom-<id>` room, applies the same role-routing matrix used for customer calls, and adds the calling agent's leg as `"agent"`.
+3. The called party (a supervisor's tabs, or a single agent) gets an `intercom.incoming` push. The agent panel pops the same modal style the supervisor panel uses, with a subtle phone-ring cadence playing while it's open.
+4. First **Answer** wins. The answerer's WebRTC leg is bridged into the intercom room as `"supervisor"` (the role name is reused so the routing matrix stays simple — it just means "the other party" inside an intercom room). Supervisors who were listening to a customer call are pulled out of that listen so their leg is free for the intercom.
+5. Both sides see an "intercom · `<name>`" pill in their topbar. Click **✕** on either side to end the call.
+6. **Reject** from any answering session ends the intercom for everyone immediately.
+
+**Disconnect / busy handling**
+- Either side closing their tab mid-intercom triggers `intercom.ended` with `agent_disconnected` / `callee_disconnected` / `supervisor_disconnected`.
+- Calling an agent who's on a customer call is rejected at the server with `"agent is on a call"`; an agent who's already in another intercom is `"agent is busy"`.
+- Calling yourself is blocked at the server (`"cannot call yourself"`).
+
+**Side-effects while in an intercom**
+- *Take call* is blocked on the agent panel for whichever agent is currently in the intercom (both sides).
+- *Listen* and *Whisper* are blocked on the supervisor panel for the answering session — the supervisor's WebRTC leg can only be in one room at a time.
+
+Out of scope for v1: an agent on a customer call cannot initiate or accept an intercom (end the call first), no conferencing (the customer can't join the intercom room), no intercom history in the call log, no supervisor-initiated calls to agents.
 
 ### Authentication
 

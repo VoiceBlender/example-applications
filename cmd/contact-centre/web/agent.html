@@ -333,6 +333,190 @@ input  { font: inherit; }
 }
 .logout-btn:hover { color: var(--red); border-color: var(--red); }
 
+/* -------------------------------------------------- intercom widget -- */
+.intercom-widget {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-left: 6px;
+}
+.intercom-select {
+  background: var(--bg);
+  border: 1px solid var(--border-bright);
+  color: var(--fg);
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.intercom-btn {
+  background: transparent;
+  border: 1px solid var(--cyan-dim, var(--border-bright));
+  color: var(--cyan);
+  padding: 6px 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 160ms, color 160ms;
+}
+.intercom-btn:hover:not(:disabled) { background: var(--cyan); color: var(--bg); }
+.intercom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.intercom-pill {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 5px 4px 5px 11px;
+  border: 1px solid var(--border-bright);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.intercom-pill .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-mute);
+}
+.intercom-pill[data-state="ringing"] {
+  color: var(--amber); border-color: var(--amber-dim);
+}
+.intercom-pill[data-state="ringing"] .dot {
+  background: var(--amber); animation: dotPulse 1.2s ease-in-out infinite;
+}
+.intercom-pill[data-state="active"] {
+  color: var(--cyan); border-color: var(--cyan-dim, var(--border-bright));
+}
+.intercom-pill[data-state="active"] .dot {
+  background: var(--cyan);
+  box-shadow: 0 0 0 0 rgba(94,200,232,.35);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+.intercom-end {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 0 8px;
+}
+.intercom-end:hover { color: var(--red); }
+
+/* -------------------------------------------------- transfer picker -- */
+.callcard-transfer, .callcard-transfer-status {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.callcard-transfer[hidden], .callcard-transfer-status[hidden] { display: none; }
+.callcard-transfer .intercom-select { flex: 1; min-width: 0; }
+.callcard-transfer-status [data-transfer-status-label] {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+/* ----------------------------------- incoming-intercom modal -- */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(8,10,14,0.74);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+  padding: 32px;
+  animation: fadeIn 160ms ease-out;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  width: min(420px, 100%);
+  border: 1px solid var(--border-bright);
+  background: var(--bg-2);
+  box-shadow: 0 28px 80px rgba(0,0,0,0.45);
+  animation: modalEnter 220ms cubic-bezier(.2,.7,.2,1);
+}
+.modal-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg));
+}
+.modal-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.modal-title::before {
+  content: '';
+  display: inline-block;
+  width: 14px; height: 1px;
+  background: var(--cyan);
+  vertical-align: middle;
+  margin-right: 10px;
+  transform: translateY(-2px);
+}
+.modal-meta { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.modal-mode {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border: 1px solid var(--amber-dim);
+  color: var(--amber);
+  background: linear-gradient(180deg, rgba(255,169,64,0.06), transparent);
+}
+.intercom-caller { padding: 24px 20px 12px; text-align: center; }
+.intercom-caller .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.intercom-caller .name {
+  margin-top: 8px;
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.intercom-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.intercom-action {
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid var(--border-bright);
+  background: var(--bg);
+  color: var(--fg);
+  transition: background 160ms, color 160ms, border-color 160ms;
+}
+.intercom-action[data-kind="answer"] { color: var(--green); border-color: var(--green-dim); }
+.intercom-action[data-kind="answer"]:hover { background: var(--green); color: var(--bg); }
+.intercom-action[data-kind="reject"] { color: var(--red); border-color: var(--red); }
+.intercom-action[data-kind="reject"]:hover { background: var(--red); color: var(--bg); }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modalEnter {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
 .stream {
   display: flex; align-items: center; gap: 10px;
   margin-left: 4px;
@@ -549,6 +733,28 @@ input  { font: inherit; }
 }
 .callcard[data-state="hold"] .callcard-dur {
   color: var(--amber);
+}
+
+/* Consult variant: cyan accent — distinguishes consult/transferring states. */
+.callcard[data-state="consult"] {
+  border-color: var(--cyan-dim);
+  background:
+    linear-gradient(180deg, rgba(94,200,232,0.05), transparent 70%),
+    var(--bg-2);
+}
+.callcard[data-state="consult"]::before {
+  background: linear-gradient(90deg, transparent 5%, var(--cyan) 50%, transparent 95%);
+}
+.callcard[data-state="consult"] .callcard-tag {
+  color: var(--cyan);
+  border-color: var(--cyan-dim);
+}
+.callcard[data-state="consult"] .callcard-tag .dot {
+  background: var(--cyan);
+  box-shadow: 0 0 0 0 var(--cyan-glow);
+}
+.callcard[data-state="consult"] .callcard-dur {
+  color: var(--cyan);
 }
 
 /* ------------------------------------------------------------- board -- */
@@ -806,6 +1012,17 @@ input  { font: inherit; }
             <span data-audio-label>ready</span>
           </span>
         </div>
+        <div class="intercom-widget" data-intercom>
+          <select class="intercom-select" data-intercom-target hidden title="online supervisors and agents">
+            <option value="">— call —</option>
+          </select>
+          <button class="intercom-btn" data-intercom-call type="button" hidden disabled>Call</button>
+          <span class="intercom-pill" data-intercom-pill data-state="idle" hidden>
+            <span class="dot"></span>
+            <span data-intercom-label>idle</span>
+            <button class="intercom-end" data-intercom-end type="button" title="hang up">✕</button>
+          </span>
+        </div>
         <button class="logout-btn" data-logout>Log out</button>
       </div>
     </header>
@@ -823,6 +1040,18 @@ input  { font: inherit; }
       </div>
     </section>
 
+    <div class="callcard" data-consult-banner data-state="consult" hidden>
+      <div class="callcard-tag"><span class="dot"></span><span>consulting</span></div>
+      <div class="callcard-peer cell-peer">
+        <div class="cell-peer-user" data-consult-from>—</div>
+        <div class="cell-peer-host" data-consult-caller></div>
+      </div>
+      <div class="callcard-dur" data-consult-dur>00:00</div>
+      <div class="callcard-actions">
+        <button class="callcard-hangup" data-consult-hangup type="button">Hang up</button>
+      </div>
+    </div>
+
     <div class="callcard" data-callcard data-state="active" hidden>
       <div class="callcard-tag"><span class="dot"></span><span data-cc-tag>on call</span></div>
       <div class="callcard-peer cell-peer">
@@ -833,7 +1062,21 @@ input  { font: inherit; }
       <div class="callcard-actions">
         <button class="cc-btn" data-mute-btn type="button">Mute</button>
         <button class="cc-btn" data-hold-btn type="button">Hold</button>
+        <button class="cc-btn" data-transfer-btn type="button">Transfer…</button>
         <button class="callcard-hangup" data-hangup-btn type="button">End call</button>
+      </div>
+      <div class="callcard-transfer" data-transfer-picker hidden>
+        <select class="intercom-select" data-transfer-target>
+          <option value="">— transfer to —</option>
+        </select>
+        <button class="cc-btn" data-transfer-blind type="button" disabled>Blind</button>
+        <button class="cc-btn" data-transfer-consult type="button" disabled>Consult</button>
+        <button class="cc-btn" data-transfer-close type="button">Cancel</button>
+      </div>
+      <div class="callcard-transfer-status" data-transfer-status hidden>
+        <span data-transfer-status-label>Transferring…</span>
+        <button class="cc-btn" data-transfer-complete type="button" hidden>Complete transfer</button>
+        <button class="cc-btn" data-transfer-cancel type="button">Cancel transfer</button>
       </div>
     </div>
 
@@ -862,6 +1105,46 @@ input  { font: inherit; }
 </div>
 
 <audio id="agent-audio" autoplay playsinline></audio>
+
+<div class="modal-backdrop" id="agent-transfer-modal" hidden>
+  <div class="modal" role="dialog" aria-labelledby="agent-transfer-title" aria-modal="true">
+    <div class="modal-head">
+      <div class="modal-title" id="agent-transfer-title" data-transfer-modal-title>Incoming transfer</div>
+      <div class="modal-meta">
+        <span class="modal-mode" data-transfer-modal-mode>RINGING</span>
+      </div>
+    </div>
+    <div class="intercom-caller">
+      <div class="lbl" data-transfer-modal-from-lbl>Transfer from</div>
+      <div class="name" data-transfer-modal-from>—</div>
+      <div class="lbl" style="margin-top:14px">Caller</div>
+      <div class="name" data-transfer-modal-caller>—</div>
+    </div>
+    <div class="intercom-actions">
+      <button class="intercom-action" data-transfer-modal-answer data-kind="answer" type="button">Answer</button>
+      <button class="intercom-action" data-transfer-modal-reject data-kind="reject" type="button">Reject</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="agent-intercom-modal" hidden>
+  <div class="modal" role="dialog" aria-labelledby="agent-intercom-title" aria-modal="true">
+    <div class="modal-head">
+      <div class="modal-title" id="agent-intercom-title">Incoming intercom</div>
+      <div class="modal-meta">
+        <span class="modal-mode" data-intercom-modal-mode>RINGING</span>
+      </div>
+    </div>
+    <div class="intercom-caller">
+      <div class="lbl" data-intercom-modal-lbl>Agent calling</div>
+      <div class="name" data-intercom-modal-name>—</div>
+    </div>
+    <div class="intercom-actions">
+      <button class="intercom-action" data-intercom-modal-answer data-kind="answer" type="button">Answer</button>
+      <button class="intercom-action" data-intercom-modal-reject data-kind="reject" type="button">Reject</button>
+    </div>
+  </div>
+</div>
 
 <template id="row-tpl">
   <div class="row grid" data-row>
@@ -929,6 +1212,14 @@ input  { font: inherit; }
   let muted = false;              // client-side mic mute state
   let currentCall = null;         // { leg_id, from, to, answered_at, on_hold }
   let takingCall = false;         // true while a 'Take call' is mid-flight
+  let currentIntercom = null;     // {state, intercom_id, target} when active or ringing
+  let supervisorsOnline = [];     // usernames from snap.supervisors — drives the dropdown
+  let agentsOnline = [];          // [{agent_id, name}] from snap.agents (other agents only)
+  let incomingIntercom = null;    // {intercom_id, agent_id, agent_name} while modal open
+  let outgoingTransfer = null;    // {transfer_id, state, target_kind, target, target_name, attended} when this agent is transferring out
+  let incomingTransfer = null;    // {transfer_id, from_name, caller_from, attended} while transfer-incoming modal is open
+  let incomingConsult  = null;    // {transfer_id, from_name, caller_from, started_at} while this agent is on an attended consult as the target
+  let firstSnapshotReceived = false; // suppress the arrival ding on the initial paint
 
   // -- WebRTC state --------------------------------------------------------
   let pc = null;
@@ -1095,6 +1386,20 @@ input  { font: inherit; }
         case 'webrtc.candidate':return onRemoteCandidate(msg);
         case 'webrtc.error':    return setAudio('failed', msg.message || 'audio failed');
         case 'call.error':      return flashCallError(msg.message || 'call action failed');
+        case 'intercom.state':    return onIntercomState(msg);
+        case 'intercom.incoming': return onIntercomIncoming(msg);
+        case 'intercom.cleared':  return onIntercomCleared(msg);
+        case 'intercom.active':   return onIntercomActive(msg);
+        case 'intercom.ended':    return onIntercomEnded(msg);
+        case 'intercom.error':    return flashCallError(msg.message || 'intercom failed');
+        case 'transfer.state':      return onTransferState(msg);
+        case 'transfer.incoming':   return onTransferIncoming(msg);
+        case 'transfer.cleared':    return onTransferCleared(msg);
+        case 'transfer.active':     return onTransferActive(msg);
+        case 'transfer.consulting': return onTransferConsulting(msg);
+        case 'transfer.completed':return onTransferCompleted(msg);
+        case 'transfer.failed':   return onTransferFailed(msg);
+        case 'transfer.error':    return flashCallError(msg.message || 'transfer failed');
       }
     });
   }
@@ -1287,9 +1592,9 @@ input  { font: inherit; }
 
   function refreshTakeButtons() {
     // Buttons stay clickable without live audio — the first click
-    // establishes the leg. Only block while already on a call or while
-    // a take is mid-flight (audio prep in progress).
-    const blocked = !!currentCall || takingCall;
+    // establishes the leg. Only block while already on a call or
+    // intercom, or while a take is mid-flight (audio prep in progress).
+    const blocked = !!currentCall || !!currentIntercom || !!incomingConsult || takingCall;
     for (const { row } of live.values()) {
       const btn = row.querySelector('[data-take]');
       if (btn) btn.disabled = blocked;
@@ -1327,6 +1632,7 @@ input  { font: inherit; }
     holdBtn.dataset.active = onHold ? 'true' : 'false';
     callcardEl.hidden = false;
     refreshTakeButtons();
+    refreshIntercomWidget();
   }
 
   // -- render ---------------------------------------------------------------
@@ -1340,6 +1646,7 @@ input  { font: inherit; }
   function render(snap) {
     const incoming = snap.calls || [];
     const seen = new Set();
+    let newArrivals = 0;
 
     let prevEl = null;
     for (const call of incoming) {
@@ -1360,8 +1667,17 @@ input  { font: inherit; }
         row.classList.add('entering');
         setTimeout(() => row.classList.remove('entering'), 900);
         prevEl = row;
+        newArrivals++;
       }
     }
+    // Subtle audio cue when a new call lands in the queue — only after
+    // the first snapshot has painted (so the cold-start arrivals don't
+    // ding all at once) and only if the agent isn't already on a call
+    // or intercom (don't distract them mid-conversation).
+    if (firstSnapshotReceived && newArrivals > 0 && !currentCall && !currentIntercom) {
+      ringer.ding();
+    }
+    firstSnapshotReceived = true;
 
     for (const [legID, entry] of live.entries()) {
       if (!seen.has(legID)) {
@@ -1389,6 +1705,45 @@ input  { font: inherit; }
     }
 
     renderCurrentCall(snap.self ? snap.self.current_call : null);
+
+    // Intercom presence + state. The dropdown list comes from the
+    // snapshot every refresh; the intercom self-state only overwrites
+    // local state when the snapshot HAS a value (so a snapshot without
+    // intercom doesn't clobber a freshly-pushed intercom.state).
+    supervisorsOnline = Array.isArray(snap.supervisors) ? snap.supervisors : [];
+    agentsOnline = Array.isArray(snap.agents) ? snap.agents : [];
+    if (snap.self && snap.self.transfer) {
+      outgoingTransfer = snap.self.transfer;
+    } else if (outgoingTransfer && firstSnapshotReceived) {
+      // Server says no transfer; clear stale local state on reconnect.
+      outgoingTransfer = null;
+    }
+    refreshTransferUI();
+
+    // Target-side attended consult (survives WS reconnect).
+    if (snap.self && snap.self.consulting) {
+      const c = snap.self.consulting;
+      if (!incomingConsult || incomingConsult.transfer_id !== c.transfer_id) {
+        showConsultBanner({
+          transfer_id: c.transfer_id,
+          from_name:   c.from_name,
+          caller_from: c.caller_from,
+          started_at:  Date.now(),
+        });
+      }
+    } else if (incomingConsult && firstSnapshotReceived) {
+      hideConsultBanner();
+    }
+    if (snap.self && snap.self.intercom) {
+      currentIntercom = {
+        state: snap.self.intercom.state,
+        intercom_id: snap.self.intercom.intercom_id,
+        target_kind: snap.self.intercom.target_kind,
+        target: snap.self.intercom.target,
+        target_name: snap.self.intercom.target_name,
+      };
+    }
+    refreshIntercomWidget();
   }
 
   function createRow(call) {
@@ -1429,6 +1784,9 @@ input  { font: inherit; }
       const since = new Date(currentCall.answered_at || currentCall.started_at).getTime();
       ccDurEl.textContent = fmtDur(now - since);
     }
+    if (incomingConsult) {
+      consultDurEl.textContent = fmtDur(now - incomingConsult.started_at);
+    }
   }, 1000);
 
   let lastErrorAt = 0;
@@ -1442,6 +1800,537 @@ input  { font: inherit; }
       }
     }, 3000);
   }
+
+  // -- arrival notification ---------------------------------------------
+  // Tiny synthesised "ding" so the agent doesn't need to stare at the
+  // queue to notice a new caller. Web Audio; no asset to ship.
+  const ringer = (() => {
+    let ctx = null;
+    function ensureCtx() {
+      if (!ctx) {
+        try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch { return null; }
+      }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function blip(freq, durMs, vol) {
+      const ac = ensureCtx(); if (!ac) return;
+      const osc = ac.createOscillator(), gain = ac.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      const t0 = ac.currentTime, t1 = t0 + durMs / 1000;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(vol, t0 + 0.015);
+      gain.gain.setValueAtTime(vol, t1 - 0.04);
+      gain.gain.linearRampToValueAtTime(0, t1);
+      osc.connect(gain).connect(ac.destination);
+      osc.start(t0); osc.stop(t1 + 0.05);
+    }
+    let ringTimer = null, ringing = false;
+    function ringBurst() {
+      blip(440, 380, 0.06);
+      setTimeout(() => blip(480, 380, 0.06), 600);
+    }
+    return {
+      // Short two-note ding (~250ms total). Subtle: 0.05 gain. Used
+      // for soft notifications like a new caller appearing in the queue.
+      ding() {
+        blip(880, 110, 0.05);
+        setTimeout(() => blip(660, 140, 0.05), 130);
+      },
+      // Looping phone-ring cadence — used while the incoming-intercom
+      // modal is open. Idempotent: start while already ringing is a no-op.
+      start() {
+        if (ringing) return;
+        ringing = true;
+        ringBurst();
+        ringTimer = setInterval(ringBurst, 3000);
+      },
+      stop() {
+        if (!ringing) return;
+        ringing = false;
+        clearInterval(ringTimer); ringTimer = null;
+      },
+    };
+  })();
+
+  // -- intercom (agent → supervisor) -----------------------------------
+  // The widget has three visible states driven by `currentIntercom`:
+  // null → dropdown + Call button visible (only when a supervisor is
+  // online and the agent isn't on a customer call); ringing → pill
+  // shows "ringing <target>" + ✕ to cancel; active → pill shows
+  // "intercom · <target>" + ✕ to hang up. Audio leg lifecycle matches
+  // the per-call pattern: prep on Call, release on intercom.ended.
+  const intercomSelectEl = $('[data-intercom-target]');
+  const intercomCallBtn  = $('[data-intercom-call]');
+  const intercomPillEl   = $('[data-intercom-pill]');
+  const intercomLabelEl  = $('[data-intercom-label]');
+  const intercomEndBtn   = $('[data-intercom-end]');
+
+  // Dropdown values are encoded as "<kind>:<id>" so a single <select>
+  // can mix supervisors and agents cleanly.
+  function parseIntercomTarget(value) {
+    const i = value.indexOf(':');
+    if (i < 0) return null;
+    return { kind: value.slice(0, i), id: value.slice(i + 1) };
+  }
+  function displayLabelFor(t) {
+    if (!t) return '—';
+    return t.target_name || t.target || '—';
+  }
+
+  function refreshIntercomWidget() {
+    if (currentIntercom) {
+      intercomSelectEl.hidden = true;
+      intercomCallBtn.hidden = true;
+      intercomPillEl.hidden = false;
+      intercomPillEl.dataset.state = currentIntercom.state || 'ringing';
+      const label = displayLabelFor(currentIntercom);
+      intercomLabelEl.textContent = currentIntercom.state === 'active'
+        ? 'intercom · ' + label
+        : 'ringing ' + label + '…';
+      return;
+    }
+    intercomPillEl.hidden = true;
+    intercomPillEl.dataset.state = 'idle';
+    const haveTargets = supervisorsOnline.length > 0 || agentsOnline.length > 0;
+    intercomSelectEl.hidden = !haveTargets;
+    intercomCallBtn.hidden = !haveTargets;
+    // Rebuild option list, preserving the current pick if still present.
+    const prev = intercomSelectEl.value;
+    intercomSelectEl.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = ''; placeholder.textContent = '— call —';
+    intercomSelectEl.appendChild(placeholder);
+    if (supervisorsOnline.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Supervisors';
+      for (const u of supervisorsOnline) {
+        const opt = document.createElement('option');
+        opt.value = 'supervisor:' + u;
+        opt.textContent = u;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      intercomSelectEl.appendChild(grp);
+    }
+    if (agentsOnline.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Agents';
+      for (const a of agentsOnline) {
+        const opt = document.createElement('option');
+        opt.value = 'agent:' + a.agent_id;
+        opt.textContent = a.name || a.agent_id;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      intercomSelectEl.appendChild(grp);
+    }
+    const blocked = !!currentCall || takingCall;
+    intercomCallBtn.disabled = blocked || !intercomSelectEl.value;
+  }
+
+  async function onIntercomCallClick() {
+    if (currentIntercom || currentCall) return;
+    const target = parseIntercomTarget(intercomSelectEl.value);
+    if (!target) return;
+    // Optimistically lock the take-call gate; ack from server overwrites.
+    takingCall = true;
+    refreshTakeButtons();
+    refreshIntercomWidget();
+    try {
+      const ok = await ensureAudioReady();
+      if (!ok) return;
+      sendWS({ type: 'intercom.call', target_kind: target.kind, target: target.id });
+    } finally {
+      takingCall = false;
+      refreshTakeButtons();
+      refreshIntercomWidget();
+    }
+  }
+
+  function onIntercomEndClick() {
+    if (!currentIntercom) return;
+    sendWS({ type: 'intercom.hangup', intercom_id: currentIntercom.intercom_id });
+    // Server will respond with intercom.ended which clears local state.
+  }
+
+  function onIntercomState(msg) {
+    // Server-side ack of intercom.call → ringing.
+    currentIntercom = {
+      state: msg.state || 'ringing',
+      intercom_id: msg.intercom_id,
+      target_kind: msg.target_kind,
+      target: msg.target,
+      target_name: msg.target_name,
+    };
+    refreshTakeButtons();
+    refreshIntercomWidget();
+  }
+  function onIntercomActive(msg) {
+    // This handler covers BOTH the calling-side (their ringing intercom
+    // just got answered) and the called-side (they just answered an
+    // incoming intercom). Distinguish by whether we already have the
+    // ringing record locally.
+    if (currentIntercom && currentIntercom.intercom_id === msg.intercom_id) {
+      currentIntercom.state = 'active';
+      currentIntercom.target_name = msg.target_name || currentIntercom.target_name;
+      currentIntercom.target = msg.target || currentIntercom.target;
+      currentIntercom.target_kind = msg.target_kind || currentIntercom.target_kind;
+    } else {
+      // Called-side activation — label flips to the *caller's* name.
+      currentIntercom = {
+        state: 'active',
+        intercom_id: msg.intercom_id,
+        target_kind: 'agent',
+        target: msg.agent_id,
+        target_name: msg.agent_name || '—',
+      };
+    }
+    // Closing the incoming modal here is harmless if it wasn't open.
+    hideIncomingIntercomModal();
+    refreshTakeButtons();
+    refreshIntercomWidget();
+  }
+  function onIntercomEnded(msg) {
+    // If the modal was open for this intercom, dismiss it (and stop the ring).
+    if (incomingIntercom && incomingIntercom.intercom_id === msg.intercom_id) {
+      hideIncomingIntercomModal();
+    }
+    const wasIn = !!currentIntercom;
+    currentIntercom = null;
+    if (wasIn) {
+      stopAudio(); // mirror per-customer-call teardown
+      flashCallError('intercom ' + (msg.reason || 'ended'));
+    }
+    refreshTakeButtons();
+    refreshIntercomWidget();
+  }
+
+  intercomCallBtn.addEventListener('click', onIntercomCallClick);
+  intercomEndBtn.addEventListener('click', onIntercomEndClick);
+  intercomSelectEl.addEventListener('change', refreshIntercomWidget);
+
+  // -- incoming intercom (agent → this agent) ---------------------------
+  const incomingModalEl    = $('#agent-intercom-modal');
+  const incomingNameEl     = $('[data-intercom-modal-name]');
+  const incomingAnswerBtn  = $('[data-intercom-modal-answer]');
+  const incomingRejectBtn  = $('[data-intercom-modal-reject]');
+
+  function showIncomingIntercomModal(msg) {
+    incomingIntercom = msg;
+    incomingNameEl.textContent = msg.agent_name || '—';
+    incomingModalEl.hidden = false;
+    ringer.start();
+  }
+  function hideIncomingIntercomModal() {
+    incomingIntercom = null;
+    incomingModalEl.hidden = true;
+    ringer.stop();
+  }
+
+  function onIntercomIncoming(msg) {
+    // If we're already in an intercom or on a customer call, auto-reject.
+    if (currentIntercom || currentCall) {
+      sendWS({ type: 'intercom.reject', intercom_id: msg.intercom_id });
+      return;
+    }
+    showIncomingIntercomModal(msg);
+  }
+  function onIntercomCleared(msg) {
+    if (incomingIntercom && incomingIntercom.intercom_id === msg.intercom_id) {
+      hideIncomingIntercomModal();
+    }
+  }
+
+  incomingAnswerBtn.addEventListener('click', async () => {
+    if (!incomingIntercom) return;
+    const id = incomingIntercom.intercom_id;
+    // Prep audio (same lazy flow as Take call) before claiming.
+    const ok = await ensureAudioReady();
+    if (!ok) return;
+    sendWS({ type: 'intercom.answer', intercom_id: id });
+    // intercom.active will flip the UI; modal close also happens there.
+  });
+  incomingRejectBtn.addEventListener('click', () => {
+    if (!incomingIntercom) return;
+    sendWS({ type: 'intercom.reject', intercom_id: incomingIntercom.intercom_id });
+    hideIncomingIntercomModal();
+  });
+  incomingModalEl.addEventListener('click', (ev) => {
+    if (ev.target === incomingModalEl) incomingRejectBtn.click();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !incomingModalEl.hidden) incomingRejectBtn.click();
+  });
+
+  // -- transfer (agent on a call → another agent or supervisor) ---------
+  // Three visible states on the call card:
+  //   idle      → Transfer button visible, picker hidden
+  //   picking   → picker visible (select + Send/Cancel), call still active
+  //   ringing   → "Transferring to <name>…" with Cancel; original call audio still up
+  // On transfer.completed the call card disappears (current_call cleared),
+  // stopAudio() releases the leg. On transfer.failed the card returns to active.
+
+  const transferBtn          = $('[data-transfer-btn]');
+  const transferPicker       = $('[data-transfer-picker]');
+  const transferTargetEl     = $('[data-transfer-target]');
+  const transferBlindBtn     = $('[data-transfer-blind]');
+  const transferConsultBtn   = $('[data-transfer-consult]');
+  const transferCloseBtn     = $('[data-transfer-close]');
+  const transferStatus       = $('[data-transfer-status]');
+  const transferStatusLbl    = $('[data-transfer-status-label]');
+  const transferCancelBtn    = $('[data-transfer-cancel]');
+  const transferCompleteBtn  = $('[data-transfer-complete]');
+
+  // Picker open state — purely local UI flag, not server state.
+  let transferPickerOpen = false;
+
+  function rebuildTransferTargets() {
+    if (!transferTargetEl) return;
+    const prev = transferTargetEl.value;
+    transferTargetEl.innerHTML = '<option value="">— transfer to —</option>';
+    if (supervisorsOnline.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Supervisors';
+      for (const u of supervisorsOnline) {
+        const opt = document.createElement('option');
+        opt.value = 'supervisor:' + u; opt.textContent = u;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      transferTargetEl.appendChild(grp);
+    }
+    if (agentsOnline.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Agents';
+      for (const a of agentsOnline) {
+        const opt = document.createElement('option');
+        opt.value = 'agent:' + a.agent_id; opt.textContent = a.name || a.agent_id;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      transferTargetEl.appendChild(grp);
+    }
+    const hasTarget = !!transferTargetEl.value;
+    transferBlindBtn.disabled = !hasTarget;
+    transferConsultBtn.disabled = !hasTarget;
+  }
+
+  function refreshTransferUI() {
+    if (!callcardEl) return;
+    if (outgoingTransfer && (outgoingTransfer.state === 'ringing' || outgoingTransfer.state === 'consulting')) {
+      // Ringing or consulting — hide normal actions, show status.
+      transferBtn.hidden = true;
+      transferPicker.hidden = true;
+      transferStatus.hidden = false;
+      const name = outgoingTransfer.target_name || outgoingTransfer.target || '—';
+      if (outgoingTransfer.state === 'consulting') {
+        transferStatusLbl.textContent = 'Consulting with ' + name + ' · caller on hold';
+        transferCompleteBtn.hidden = false;
+        transferCancelBtn.textContent = 'Cancel transfer';
+      } else if (outgoingTransfer.attended) {
+        transferStatusLbl.textContent = 'Consult ringing ' + name + '…';
+        transferCompleteBtn.hidden = true;
+        transferCancelBtn.textContent = 'Cancel transfer';
+      } else {
+        transferStatusLbl.textContent = 'Transferring to ' + name + '…';
+        transferCompleteBtn.hidden = true;
+        transferCancelBtn.textContent = 'Cancel transfer';
+      }
+      transferPickerOpen = false;
+      return;
+    }
+    transferStatus.hidden = true;
+    transferCompleteBtn.hidden = true;
+    if (!currentCall) {
+      // No call — hide everything; reset.
+      transferBtn.hidden = true;
+      transferPicker.hidden = true;
+      transferPickerOpen = false;
+      return;
+    }
+    transferBtn.hidden = false;
+    transferPicker.hidden = !transferPickerOpen;
+    if (transferPickerOpen) rebuildTransferTargets();
+  }
+
+  function sendTransferStart(attended) {
+    const v = transferTargetEl.value;
+    if (!v || !currentCall) return;
+    const colon = v.indexOf(':');
+    const kind = v.slice(0, colon), target = v.slice(colon + 1);
+    sendWS({ type: 'transfer.start', target_kind: kind, target, attended });
+    // Optimistically close the picker; server's transfer.state will set the ringing UI.
+    transferPickerOpen = false;
+    refreshTransferUI();
+  }
+
+  transferBtn.addEventListener('click', () => {
+    transferPickerOpen = !transferPickerOpen;
+    refreshTransferUI();
+  });
+  transferCloseBtn.addEventListener('click', () => {
+    transferPickerOpen = false;
+    refreshTransferUI();
+  });
+  transferTargetEl.addEventListener('change', () => {
+    const hasTarget = !!transferTargetEl.value;
+    transferBlindBtn.disabled = !hasTarget;
+    transferConsultBtn.disabled = !hasTarget;
+  });
+  transferBlindBtn.addEventListener('click', () => sendTransferStart(false));
+  transferConsultBtn.addEventListener('click', () => sendTransferStart(true));
+  transferCancelBtn.addEventListener('click', () => {
+    if (!outgoingTransfer) return;
+    sendWS({ type: 'transfer.cancel', transfer_id: outgoingTransfer.transfer_id });
+  });
+  transferCompleteBtn.addEventListener('click', () => {
+    if (!outgoingTransfer || outgoingTransfer.state !== 'consulting') return;
+    sendWS({ type: 'transfer.complete', transfer_id: outgoingTransfer.transfer_id });
+  });
+
+  function onTransferState(msg) {
+    outgoingTransfer = {
+      transfer_id: msg.transfer_id,
+      state: msg.state || 'ringing',
+      target_kind: msg.target_kind,
+      target: msg.target,
+      target_name: msg.target_name,
+      attended: !!msg.attended,
+    };
+    refreshTransferUI();
+  }
+  function onTransferCompleted(_msg) {
+    // The customer is now with the target; the next snapshot will
+    // clear our currentCall and the existing per-call teardown takes
+    // over (renderCurrentCall(null) → stopAudio()).
+    outgoingTransfer = null;
+    refreshTransferUI();
+    flashCallError('call transferred');
+  }
+  function onTransferFailed(msg) {
+    outgoingTransfer = null;
+    refreshTransferUI();
+    flashCallError('transfer ' + (msg.reason || 'failed'));
+    // The customer is back with us — the next snapshot reflects the resumed call.
+  }
+  function onTransferConsulting(msg) {
+    // Fired on both sides at the start of an attended consult.
+    // Initiator: flip our outgoing transfer to consulting state.
+    if (outgoingTransfer && outgoingTransfer.transfer_id === msg.transfer_id) {
+      outgoingTransfer.state = 'consulting';
+      refreshTransferUI();
+      return;
+    }
+    // Target: close the incoming modal and show the consult banner.
+    if (incomingTransfer && incomingTransfer.transfer_id === msg.transfer_id) {
+      hideIncomingTransfer();
+    }
+    showConsultBanner({
+      transfer_id: msg.transfer_id,
+      from_name:   msg.from_name,
+      caller_from: msg.caller_from,
+      started_at:  Date.now(),
+    });
+  }
+
+  // -- transfer incoming (this agent is the target) ---------------------
+  const transferModalEl       = $('#agent-transfer-modal');
+  const transferModalTitleEl  = $('[data-transfer-modal-title]');
+  const transferModalModeEl   = $('[data-transfer-modal-mode]');
+  const transferModalFromLblEl= $('[data-transfer-modal-from-lbl]');
+  const transferModalFromEl   = $('[data-transfer-modal-from]');
+  const transferModalCallerEl = $('[data-transfer-modal-caller]');
+  const transferModalAnswer   = $('[data-transfer-modal-answer]');
+  const transferModalReject   = $('[data-transfer-modal-reject]');
+
+  function showIncomingTransfer(msg) {
+    incomingTransfer = msg;
+    const attended = !!msg.attended;
+    transferModalTitleEl.textContent = attended ? 'Incoming consult' : 'Incoming transfer';
+    transferModalModeEl.textContent  = attended ? 'CONSULT' : 'RINGING';
+    transferModalFromLblEl.textContent = attended ? 'Consult from' : 'Transfer from';
+    transferModalFromEl.textContent = msg.from_name || '—';
+    transferModalCallerEl.textContent = msg.caller_from || '—';
+    transferModalEl.hidden = false;
+    ringer.start();
+  }
+  function hideIncomingTransfer() {
+    incomingTransfer = null;
+    transferModalEl.hidden = true;
+    ringer.stop();
+  }
+
+  // Consult banner (target's view during an attended consult).
+  const consultBannerEl = $('[data-consult-banner]');
+  const consultFromEl   = $('[data-consult-from]');
+  const consultCallerEl = $('[data-consult-caller]');
+  const consultDurEl    = $('[data-consult-dur]');
+  const consultHangupBtn= $('[data-consult-hangup]');
+
+  function showConsultBanner(c) {
+    incomingConsult = c;
+    consultFromEl.textContent = 'Consulting with ' + (c.from_name || '—');
+    consultCallerEl.textContent = c.caller_from ? 'caller: ' + c.caller_from : '';
+    consultDurEl.textContent = '00:00';
+    consultBannerEl.hidden = false;
+    refreshTakeButtons();
+  }
+  function hideConsultBanner() {
+    incomingConsult = null;
+    consultBannerEl.hidden = true;
+    refreshTakeButtons();
+  }
+  consultHangupBtn.addEventListener('click', () => {
+    if (!incomingConsult) return;
+    sendWS({ type: 'transfer.reject', transfer_id: incomingConsult.transfer_id });
+  });
+
+  function onTransferIncoming(msg) {
+    if (currentCall || currentIntercom) {
+      // Busy — auto-reject so the originating agent isn't left hanging.
+      sendWS({ type: 'transfer.reject', transfer_id: msg.transfer_id });
+      return;
+    }
+    showIncomingTransfer(msg);
+  }
+  function onTransferCleared(msg) {
+    if (incomingTransfer && incomingTransfer.transfer_id === msg.transfer_id) {
+      hideIncomingTransfer();
+    }
+    if (incomingConsult && incomingConsult.transfer_id === msg.transfer_id) {
+      hideConsultBanner();
+    }
+  }
+  function onTransferActive(_msg) {
+    // For the called agent: the modal closes, the snapshot's
+    // self.current_call now points at the transferred call, and the
+    // existing renderCurrentCall() shows the call card. Also hide any
+    // consult banner: an attended consult that completed brings the
+    // customer here.
+    hideIncomingTransfer();
+    hideConsultBanner();
+  }
+
+  transferModalAnswer.addEventListener('click', async () => {
+    if (!incomingTransfer) return;
+    const id = incomingTransfer.transfer_id;
+    const ok = await ensureAudioReady();
+    if (!ok) return;
+    sendWS({ type: 'transfer.answer', transfer_id: id });
+  });
+  transferModalReject.addEventListener('click', () => {
+    if (!incomingTransfer) return;
+    sendWS({ type: 'transfer.reject', transfer_id: incomingTransfer.transfer_id });
+    hideIncomingTransfer();
+  });
+  transferModalEl.addEventListener('click', (ev) => {
+    if (ev.target === transferModalEl) transferModalReject.click();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !transferModalEl.hidden) transferModalReject.click();
+  });
 
   bootstrap();
 })();

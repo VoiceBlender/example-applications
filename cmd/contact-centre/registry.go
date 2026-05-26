@@ -28,6 +28,24 @@ type callView struct {
 	// holdPlaybackID is the room playback id of the hold music started
 	// when the call was placed on hold; needed to stop it on resume.
 	holdPlaybackID string `json:"-"`
+	// transferSignal is a buffered (size 1) channel the per-call
+	// goroutine selects on. After a successful transfer the handler
+	// pushes the new agent leg id; the goroutine then swaps which
+	// leg it watches for disconnect.
+	transferSignal chan transferOutcome `json:"-"`
+	// transferredFrom holds the name of the previous agent if this
+	// call was transferred. Used by newLogEntry to fill out the
+	// LogEntry.TransferredFrom field. Not serialized.
+	transferredFrom string `json:"-"`
+}
+
+// transferOutcome is the payload sent on callView.transferSignal once
+// a transfer completes successfully. The per-call goroutine uses it
+// to re-subscribe to the new agent leg's disconnect events.
+type transferOutcome struct {
+	NewAgentID   string
+	NewAgentName string
+	NewAgentLeg  string
 }
 
 type stats struct {
@@ -68,12 +86,13 @@ func (r *registry) addRinging(legID, from, to string) <-chan struct{} {
 	answer := make(chan struct{}, 1)
 	r.mu.Lock()
 	r.calls = append(r.calls, &callView{
-		LegID:     legID,
-		From:      from,
-		To:        to,
-		State:     "ringing",
-		StartedAt: time.Now(),
-		answer:    answer,
+		LegID:          legID,
+		From:           from,
+		To:             to,
+		State:          "ringing",
+		StartedAt:      time.Now(),
+		answer:         answer,
+		transferSignal: make(chan transferOutcome, 1),
 	})
 	r.broadcastLocked()
 	r.mu.Unlock()
@@ -116,6 +135,54 @@ func (r *registry) setHold(legID string, onHold bool, holdPlaybackID string) boo
 	return false
 }
 
+// transferTo atomically rewrites the call's owning agent identity to
+// the new party, stashes the previous agent's display name in
+// transferredFrom (used later by newLogEntry), clears the on-hold
+// flag, and pushes a non-blocking signal on transferSignal so the
+// per-call goroutine swaps which leg it watches for disconnects.
+// Returns false if the call no longer exists.
+func (r *registry) transferTo(callLegID, newAgentID, newAgentName, newAgentLeg string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.calls {
+		if c.LegID != callLegID {
+			continue
+		}
+		if c.AnsweredByName != "" {
+			c.transferredFrom = c.AnsweredByName
+		}
+		c.AnsweredByAgentID = newAgentID
+		c.AnsweredByName = newAgentName
+		c.AnsweredAgentLeg = newAgentLeg
+		c.OnHold = false
+		c.holdPlaybackID = ""
+		if c.transferSignal != nil {
+			select {
+			case c.transferSignal <- transferOutcome{NewAgentID: newAgentID, NewAgentName: newAgentName, NewAgentLeg: newAgentLeg}:
+			default:
+			}
+		}
+		r.broadcastLocked()
+		return true
+	}
+	return false
+}
+
+// transferChan returns the buffered transfer-signal channel for the
+// given call so the per-call goroutine can select on it. Returns nil
+// if the call is gone (nil channel blocks forever in a select, which
+// is the right "no-op" behaviour).
+func (r *registry) transferChan(callLegID string) <-chan transferOutcome {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.calls {
+		if c.LegID == callLegID {
+			return c.transferSignal
+		}
+	}
+	return nil
+}
+
 // claim atomically transitions a queued call to "in_call" and wakes the
 // per-call goroutine. Returns false if the call is not currently claimable
 // (gone, still ringing, or already answered).
@@ -153,6 +220,7 @@ func (r *registry) lookup(legID string) *callView {
 		if c.LegID == legID {
 			cp := *c
 			cp.answer = nil
+			cp.transferSignal = nil
 			return &cp
 		}
 	}
@@ -171,6 +239,7 @@ func (r *registry) callByRoom(roomID string) *callView {
 		if c.RoomID == roomID {
 			cp := *c
 			cp.answer = nil
+			cp.transferSignal = nil
 			return &cp
 		}
 	}
@@ -186,6 +255,7 @@ func (r *registry) callAnsweredBy(agentID string) *callView {
 		if c.State == "in_call" && c.AnsweredByAgentID == agentID {
 			cp := *c
 			cp.answer = nil
+			cp.transferSignal = nil
 			return &cp
 		}
 	}
@@ -248,6 +318,7 @@ func (r *registry) queueSnapshot() snapshot {
 		if c.State == "queued" {
 			cp := *c
 			cp.answer = nil
+			cp.transferSignal = nil
 			out.Calls = append(out.Calls, cp)
 		}
 	}

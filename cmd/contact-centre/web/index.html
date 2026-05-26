@@ -1000,6 +1000,60 @@ body::after {
   .transcript-at { display: none; }
 }
 
+/* Intercom variant of the header pill — cyan for "agent ringing me / active". */
+.listen-pill[data-state="active"] {
+  color: var(--cyan); border-color: var(--cyan-dim);
+  background: linear-gradient(180deg, rgba(94,200,232,0.08), transparent);
+}
+.listen-pill[data-state="active"] .dot {
+  background: var(--cyan);
+  box-shadow: 0 0 0 0 rgba(94,200,232,.35);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+.listen-pill[data-state="active"] .listen-stop { opacity: 1; pointer-events: auto; }
+
+/* Intercom-incoming modal: cloned from transcript-modal structure
+   with bigger answer/reject buttons. */
+.intercom-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.intercom-action {
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border: 1px solid var(--border-bright);
+  background: var(--bg);
+  color: var(--fg);
+  transition: background 160ms, color 160ms, border-color 160ms;
+}
+.intercom-action[data-kind="answer"] { color: var(--green); border-color: var(--green-dim); }
+.intercom-action[data-kind="answer"]:hover { background: var(--green); color: var(--bg); }
+.intercom-action[data-kind="reject"] { color: var(--red); border-color: var(--red); }
+.intercom-action[data-kind="reject"]:hover { background: var(--red); color: var(--bg); }
+.intercom-caller {
+  padding: 24px 20px 12px;
+  text-align: center;
+}
+.intercom-caller .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.intercom-caller .name {
+  margin-top: 8px;
+  font-size: 26px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
 /* Whisper variant of the header listen-pill */
 .listen-pill[data-state="whispering"] {
   color: var(--amber);
@@ -1038,6 +1092,21 @@ body::after {
         <span class="dot"></span>
         <span data-listen-label>not listening</span>
         <button class="listen-stop" data-listen-stop type="button" title="stop listening">✕</button>
+      </div>
+      <div class="listen-pill intercom-pill" data-intercom-pill data-state="idle" hidden title="active intercom from an agent">
+        <span class="dot"></span>
+        <span data-intercom-label>intercom</span>
+        <button class="listen-stop" data-intercom-end type="button" title="end intercom">✕</button>
+      </div>
+      <div class="listen-pill intercom-pill" data-consult-pill data-state="idle" hidden title="consulting with an agent about a transfer">
+        <span class="dot"></span>
+        <span data-consult-label>consulting</span>
+        <button class="listen-stop" data-consult-end type="button" title="end consult">✕</button>
+      </div>
+      <div class="listen-pill intercom-pill" data-transfer-pill data-state="idle" hidden title="on a customer call that was transferred to you">
+        <span class="dot"></span>
+        <span data-transfer-label>transferred call</span>
+        <button class="listen-stop" data-transfer-end type="button" title="hang up customer">✕</button>
       </div>
       <div class="stream" data-state="connecting" data-stream>
         <span class="stream-dot"></span>
@@ -1206,6 +1275,46 @@ body::after {
   </div>
 </template>
 
+<div class="modal-backdrop" id="transfer-modal" hidden>
+  <div class="modal" role="dialog" aria-labelledby="transfer-modal-title" aria-modal="true">
+    <div class="modal-head">
+      <div class="modal-title" id="transfer-modal-title" data-transfer-modal-title>Incoming transfer</div>
+      <div class="modal-meta">
+        <span class="modal-mode" data-transfer-modal-mode>RINGING</span>
+      </div>
+    </div>
+    <div class="intercom-caller">
+      <div class="lbl" data-transfer-modal-from-lbl>Transfer from</div>
+      <div class="name" data-transfer-modal-from>—</div>
+      <div class="lbl" style="margin-top:14px">Caller</div>
+      <div class="name" data-transfer-modal-caller>—</div>
+    </div>
+    <div class="intercom-actions">
+      <button class="intercom-action" data-transfer-modal-answer data-kind="answer" type="button">Answer</button>
+      <button class="intercom-action" data-transfer-modal-reject data-kind="reject" type="button">Reject</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="intercom-modal" hidden>
+  <div class="modal" role="dialog" aria-labelledby="intercom-modal-title" aria-modal="true">
+    <div class="modal-head">
+      <div class="modal-title" id="intercom-modal-title">Incoming intercom</div>
+      <div class="modal-meta">
+        <span class="modal-mode" data-mode>RINGING</span>
+      </div>
+    </div>
+    <div class="intercom-caller">
+      <div class="lbl">Agent calling</div>
+      <div class="name" data-intercom-modal-name>—</div>
+    </div>
+    <div class="intercom-actions">
+      <button class="intercom-action" data-intercom-answer data-kind="answer" type="button">Answer</button>
+      <button class="intercom-action" data-intercom-reject data-kind="reject" type="button">Reject</button>
+    </div>
+  </div>
+</div>
+
 <template id="row-tpl">
   <div class="row grid" data-row>
     <div class="cell-pos" data-cell="position">—</div>
@@ -1327,6 +1436,15 @@ body::after {
   let listeningCallLegID = null;
   let whispering = false;
   let micStream = null;    // real microphone stream, fetched lazily on first whisper
+
+  // Intercom state (agent → supervisor)
+  let activeIntercom = null;       // {intercom_id, agent_id, agent_name} once answered
+  let pendingIntercom = null;      // {intercom_id, agent_id, agent_name} while modal open
+
+  // Transfer state (agent transferred a customer call to this supervisor)
+  let pendingTransfer = null;      // {transfer_id, from_name, caller_from, attended} while modal open
+  let activeTransferCall = null;   // {call_leg_id, caller_from} once accepted (post-transfer)
+  let activeConsult = null;        // {transfer_id, from_name, caller_from} during attended consult phase
 
   // -------- sign-out button visibility --------
   // Only show the Sign-out button when an auth cookie is set; otherwise
@@ -1460,6 +1578,50 @@ body::after {
     renderCallLog(snap.call_log || []);
     renderMetrics(snap.metrics || null);
     applyListenState(snap.self ? snap.self.listening_room_id : null);
+    // Restore active transferred-customer-call state after WS reconnect.
+    const selfTC = snap.self && snap.self.transferred_call;
+    if (selfTC) {
+      if (!activeTransferCall || activeTransferCall.call_leg_id !== selfTC.call_leg_id) {
+        activeTransferCall = { call_leg_id: selfTC.call_leg_id, caller_from: selfTC.caller_from };
+        setActiveTransferPill(selfTC.caller_from || '—');
+        for (const { row, call } of live.values()) updateRow(row, call);
+      }
+    } else if (!selfTC && activeTransferCall) {
+      clearActiveTransferCall();
+    }
+    // Restore attended-consult state after a WS reconnect.
+    const selfCs = snap.self && snap.self.consulting;
+    if (selfCs) {
+      if (!activeConsult || activeConsult.transfer_id !== selfCs.transfer_id) {
+        activeConsult = {
+          transfer_id: selfCs.transfer_id,
+          from_name:   selfCs.from_name,
+          caller_from: selfCs.caller_from,
+        };
+        setConsultPill(activeConsult);
+        for (const { row, call } of live.values()) updateRow(row, call);
+      }
+    } else if (!selfCs && activeConsult) {
+      activeConsult = null;
+      setConsultPill(null);
+      for (const { row, call } of live.values()) updateRow(row, call);
+    }
+
+    // Restore intercom state after a WS reconnect mid-call. Live
+    // transitions are driven by intercom.* pushes; this just covers
+    // the cold-start / refresh case.
+    const selfIC = snap.self && snap.self.intercom;
+    if (selfIC && selfIC.state === 'active') {
+      if (!activeIntercom || activeIntercom.intercom_id !== selfIC.intercom_id) {
+        activeIntercom = { intercom_id: selfIC.intercom_id, agent_name: selfIC.agent_name };
+        setActiveIntercomPill(selfIC.agent_name || '—');
+      }
+    } else if (!selfIC && activeIntercom) {
+      // Snapshot says no intercom, but our live state believes there
+      // is one. Trust the snapshot only on reconnect — guard would be
+      // tricky here. For now we don't clear from the snapshot path;
+      // the explicit intercom.ended push handles teardown.
+    }
 
     // If the transcript modal is open, refresh it off the new snapshot.
     if (openTranscriptLegID) refreshModalFromState();
@@ -1518,7 +1680,10 @@ body::after {
     const btn = row.querySelector('[data-listen-btn]');
     const lbl = row.querySelector('[data-listen-btn-label]');
     const glyph = row.querySelector('.listen-btn-glyph');
-    const listenable = (call.state === 'in_call');
+    // Listen is also blocked while we're in an intercom, on a
+    // transferred customer call, or in a consult — the supervisor's
+    // WebRTC leg is bridged into another room and can't also be in this one.
+    const listenable = (call.state === 'in_call') && !activeIntercom && !activeTransferCall && !activeConsult;
     btn.disabled = !listenable;
     if (listenable && listeningCallLegID === call.leg_id) {
       btn.dataset.active = 'true';
@@ -2041,7 +2206,19 @@ body::after {
       const s = pc.connectionState;
       if (s === 'connected' && !listeningRoomID) setListenPill('off', 'audio ready');
       else if (s === 'connected')                setListenPill('live', 'listening');
-      else if (s === 'failed')                   setListenPill('failed', 'audio failed');
+      else if (s === 'failed' || s === 'closed') {
+        // The supervisor's leg may have been cleaned up server-side
+        // when its room was deleted (call ended, intercom torn down).
+        // If we're not actively listening or in an intercom, treat
+        // this as a benign reset: dispose the stale PC so the next
+        // Listen / Answer click builds a fresh one. Only surface
+        // "audio failed" when something was actually in flight.
+        if (!listeningRoomID && !activeIntercom) {
+          teardownPC();
+          return;
+        }
+        setListenPill('failed', 'audio failed');
+      }
     };
     try {
       const offer = await pc.createOffer();
@@ -2192,11 +2369,21 @@ body::after {
       let msg;
       try { msg = JSON.parse(m.data); } catch (e) { return console.error('bad message', e); }
       switch (msg.type) {
-        case 'snapshot':         return render(msg);
-        case 'webrtc.answer':    return onAnswer(msg);
-        case 'webrtc.candidate': return onRemoteCandidate(msg);
-        case 'webrtc.error':     return setListenPill('failed', msg.message || 'audio failed');
-        case 'listen.error':     return setListenPill('failed', msg.message || 'listen failed');
+        case 'snapshot':           return render(msg);
+        case 'webrtc.answer':      return onAnswer(msg);
+        case 'webrtc.candidate':   return onRemoteCandidate(msg);
+        case 'webrtc.error':       return setListenPill('failed', msg.message || 'audio failed');
+        case 'listen.error':       return setListenPill('failed', msg.message || 'listen failed');
+        case 'intercom.incoming':  return onIntercomIncoming(msg);
+        case 'intercom.cleared':   return onIntercomCleared(msg);
+        case 'intercom.active':    return onIntercomActive(msg);
+        case 'intercom.ended':     return onIntercomEnded(msg);
+        case 'intercom.error':     return console.warn('[supervisor] intercom error:', msg.message);
+        case 'transfer.incoming':   return onTransferIncoming(msg);
+        case 'transfer.cleared':    return onTransferCleared(msg);
+        case 'transfer.active':     return onTransferActive(msg);
+        case 'transfer.consulting': return onTransferConsulting(msg);
+        case 'transfer.error':      return console.warn('[supervisor] transfer error:', msg.message);
       }
     });
   }
@@ -2220,6 +2407,288 @@ body::after {
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 1.6, 6000);
   }
+
+  // -- intercom (agent → supervisor) -----------------------------------
+  // Incoming-call modal opens on intercom.incoming, closes on
+  // intercom.cleared (someone else answered / agent cancelled /
+  // rejected). On Answer we prep the supervisor's WebRTC leg via the
+  // existing ensureListenPC() and let the server bridge it into the
+  // intercom room; intercom.active flips the topbar pill to "intercom
+  // · agent X" and disables Listen/Whisper. intercom.ended returns
+  // everything to idle.
+
+  const intercomModalEl = $('#intercom-modal');
+  const intercomNameEl  = $('[data-intercom-modal-name]');
+  const intercomAnswerBtn = $('[data-intercom-answer]');
+  const intercomRejectBtn = $('[data-intercom-reject]');
+  const intercomPillEl  = $('[data-intercom-pill]');
+  const intercomPillLabelEl = $('[data-intercom-label]');
+  const intercomPillEndBtn = $('[data-intercom-end]');
+
+  // Tiny synthesised ringer — loops a soft two-tone "phone ring"
+  // cadence while the modal is open. Web Audio so we ship no audio
+  // assets; volume kept low (0.06) to be unobtrusive in an office.
+  const ringer = (() => {
+    let ctx = null, timer = null, active = false;
+    function ensureCtx() {
+      if (!ctx) {
+        try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch { return null; }
+      }
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      return ctx;
+    }
+    function blip(freq, durMs, vol) {
+      const ac = ensureCtx(); if (!ac) return;
+      const osc = ac.createOscillator(), gain = ac.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      const t0 = ac.currentTime, t1 = t0 + durMs / 1000;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(vol, t0 + 0.02);
+      gain.gain.setValueAtTime(vol, t1 - 0.04);
+      gain.gain.linearRampToValueAtTime(0, t1);
+      osc.connect(gain).connect(ac.destination);
+      osc.start(t0); osc.stop(t1 + 0.05);
+    }
+    function ringBurst() {
+      // BT-style double ring (~0.4s tone, 0.2s gap, 0.4s tone).
+      blip(440, 380, 0.06);
+      setTimeout(() => blip(480, 380, 0.06), 600);
+    }
+    return {
+      start() {
+        if (active) return;
+        active = true;
+        ringBurst();
+        timer = setInterval(ringBurst, 3000);
+      },
+      stop() {
+        if (!active) return;
+        active = false;
+        clearInterval(timer); timer = null;
+      },
+    };
+  })();
+
+  function showIncomingIntercom(msg) {
+    pendingIntercom = msg;
+    intercomNameEl.textContent = msg.agent_name || '—';
+    intercomModalEl.hidden = false;
+    ringer.start();
+  }
+  function hideIncomingIntercom() {
+    pendingIntercom = null;
+    intercomModalEl.hidden = true;
+    ringer.stop();
+  }
+
+  function setActiveIntercomPill(name) {
+    if (!name) {
+      intercomPillEl.hidden = true;
+      intercomPillEl.dataset.state = 'idle';
+      return;
+    }
+    intercomPillEl.hidden = false;
+    intercomPillEl.dataset.state = 'active';
+    intercomPillLabelEl.textContent = 'intercom · ' + name;
+  }
+
+  function onIntercomIncoming(msg) {
+    if (activeIntercom) {
+      // Already in an intercom — reject the new one for this session.
+      sendWS({ type: 'intercom.reject', intercom_id: msg.intercom_id });
+      return;
+    }
+    // If a different ringing modal was already open, drop the previous
+    // one in favour of the new one (rare; pick the latest).
+    showIncomingIntercom(msg);
+  }
+  function onIntercomCleared(msg) {
+    if (pendingIntercom && pendingIntercom.intercom_id === msg.intercom_id) {
+      hideIncomingIntercom();
+    }
+  }
+  function onIntercomActive(msg) {
+    activeIntercom = { intercom_id: msg.intercom_id, agent_name: msg.agent_name };
+    hideIncomingIntercom();
+    setActiveIntercomPill(msg.agent_name || '—');
+    // Listen/Whisper are now blocked — re-render rows so the button gating updates.
+    for (const { row, call } of live.values()) updateRow(row, call);
+  }
+  function onIntercomEnded(msg) {
+    if (pendingIntercom && pendingIntercom.intercom_id === msg.intercom_id) {
+      hideIncomingIntercom();
+    }
+    if (activeIntercom && activeIntercom.intercom_id === msg.intercom_id) {
+      activeIntercom = null;
+      setActiveIntercomPill('');
+      for (const { row, call } of live.values()) updateRow(row, call);
+    }
+  }
+
+  // -- transfer (agent transferred a customer call to this supervisor) ---
+  const transferModalEl       = $('#transfer-modal');
+  const transferModalTitleEl  = $('[data-transfer-modal-title]');
+  const transferModalModeEl   = $('[data-transfer-modal-mode]');
+  const transferModalFromLblEl= $('[data-transfer-modal-from-lbl]');
+  const transferModalFromEl   = $('[data-transfer-modal-from]');
+  const transferModalCallerEl = $('[data-transfer-modal-caller]');
+  const transferAnswerBtn     = $('[data-transfer-modal-answer]');
+  const transferRejectBtn     = $('[data-transfer-modal-reject]');
+  const transferPillEl        = $('[data-transfer-pill]');
+  const transferLabelEl       = $('[data-transfer-label]');
+  const transferEndBtn        = $('[data-transfer-end]');
+  const consultPillEl         = $('[data-consult-pill]');
+  const consultLabelEl        = $('[data-consult-label]');
+  const consultEndBtn         = $('[data-consult-end]');
+
+  function showIncomingTransfer(msg) {
+    pendingTransfer = msg;
+    const attended = !!msg.attended;
+    transferModalTitleEl.textContent   = attended ? 'Incoming consult' : 'Incoming transfer';
+    transferModalModeEl.textContent    = attended ? 'CONSULT' : 'RINGING';
+    transferModalFromLblEl.textContent = attended ? 'Consult from' : 'Transfer from';
+    transferModalFromEl.textContent = msg.from_name || '—';
+    transferModalCallerEl.textContent = msg.caller_from || '—';
+    transferModalEl.hidden = false;
+    ringer.start();
+  }
+  function hideIncomingTransfer() {
+    pendingTransfer = null;
+    transferModalEl.hidden = true;
+    ringer.stop();
+  }
+  function setActiveTransferPill(callerFrom) {
+    if (!callerFrom) {
+      transferPillEl.hidden = true;
+      transferPillEl.dataset.state = 'idle';
+      return;
+    }
+    transferPillEl.hidden = false;
+    transferPillEl.dataset.state = 'active';
+    transferLabelEl.textContent = 'on call · ' + callerFrom;
+  }
+  function setConsultPill(consult) {
+    if (!consult) {
+      consultPillEl.hidden = true;
+      consultPillEl.dataset.state = 'idle';
+      return;
+    }
+    consultPillEl.hidden = false;
+    consultPillEl.dataset.state = 'active';
+    const tail = consult.caller_from ? ' · ' + consult.caller_from : '';
+    consultLabelEl.textContent = 'consult · ' + (consult.from_name || '—') + tail;
+  }
+
+  function onTransferIncoming(msg) {
+    if (activeIntercom || activeTransferCall || activeConsult) {
+      sendWS({ type: 'transfer.reject', transfer_id: msg.transfer_id });
+      return;
+    }
+    showIncomingTransfer(msg);
+  }
+  function onTransferCleared(msg) {
+    if (pendingTransfer && pendingTransfer.transfer_id === msg.transfer_id) {
+      hideIncomingTransfer();
+    }
+    if (activeConsult && activeConsult.transfer_id === msg.transfer_id) {
+      activeConsult = null;
+      setConsultPill(null);
+      for (const { row, call } of live.values()) updateRow(row, call);
+    }
+  }
+  function onTransferActive(msg) {
+    activeTransferCall = { call_leg_id: msg.call_leg_id, caller_from: msg.caller_from };
+    hideIncomingTransfer();
+    // Consult → transferred-call: drop consult pill, light up transfer pill.
+    activeConsult = null;
+    setConsultPill(null);
+    setActiveTransferPill(msg.caller_from || '—');
+    // Refresh row buttons to disable Listen on every other call.
+    for (const { row, call } of live.values()) updateRow(row, call);
+  }
+  function onTransferConsulting(msg) {
+    // Supervisor is the target of an attended consult — close the modal
+    // (audio came up via answer) and light the consult pill.
+    if (pendingTransfer && pendingTransfer.transfer_id === msg.transfer_id) {
+      hideIncomingTransfer();
+    }
+    activeConsult = {
+      transfer_id: msg.transfer_id,
+      from_name:   msg.from_name,
+      caller_from: msg.caller_from,
+    };
+    setConsultPill(activeConsult);
+    for (const { row, call } of live.values()) updateRow(row, call);
+  }
+  function clearActiveTransferCall() {
+    activeTransferCall = null;
+    setActiveTransferPill('');
+    for (const { row, call } of live.values()) updateRow(row, call);
+  }
+
+  transferAnswerBtn.addEventListener('click', async () => {
+    if (!pendingTransfer) return;
+    const id = pendingTransfer.transfer_id;
+    const ready = await ensureListenPC();
+    if (!ready) return;
+    sendWS({ type: 'transfer.answer', transfer_id: id });
+  });
+  transferRejectBtn.addEventListener('click', () => {
+    if (!pendingTransfer) return;
+    sendWS({ type: 'transfer.reject', transfer_id: pendingTransfer.transfer_id });
+    hideIncomingTransfer();
+  });
+  transferEndBtn.addEventListener('click', () => {
+    if (!activeTransferCall) return;
+    sendWS({ type: 'transfer.hangup', transfer_id: '' });
+    // The customer-leg hangup propagates server-side; we'll lose the
+    // session.transferred_call on the next snapshot. Clear now for
+    // responsiveness.
+    clearActiveTransferCall();
+  });
+  consultEndBtn.addEventListener('click', () => {
+    if (!activeConsult) return;
+    sendWS({ type: 'transfer.reject', transfer_id: activeConsult.transfer_id });
+    // Server pushes transfer.cleared back (which also clears state),
+    // but flush locally too so the pill disappears immediately.
+    activeConsult = null;
+    setConsultPill(null);
+  });
+  transferModalEl.addEventListener('click', (ev) => {
+    if (ev.target === transferModalEl) transferRejectBtn.click();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !transferModalEl.hidden) transferRejectBtn.click();
+  });
+
+  intercomAnswerBtn.addEventListener('click', async () => {
+    if (!pendingIntercom) return;
+    const id = pendingIntercom.intercom_id;
+    // Prep audio leg if it's not up already (same pattern as Listen).
+    const ready = await ensureListenPC();
+    if (!ready) return;
+    sendWS({ type: 'intercom.answer', intercom_id: id });
+    // Server will push intercom.active which flips the UI.
+  });
+  intercomRejectBtn.addEventListener('click', () => {
+    if (!pendingIntercom) return;
+    sendWS({ type: 'intercom.reject', intercom_id: pendingIntercom.intercom_id });
+    hideIncomingIntercom();
+  });
+  intercomPillEndBtn.addEventListener('click', () => {
+    if (!activeIntercom) return;
+    sendWS({ type: 'intercom.hangup', intercom_id: activeIntercom.intercom_id });
+  });
+  // Esc / click outside the backdrop both count as Reject — same as
+  // clicking the Reject button.
+  intercomModalEl.addEventListener('click', (ev) => {
+    if (ev.target === intercomModalEl) intercomRejectBtn.click();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !intercomModalEl.hidden) intercomRejectBtn.click();
+  });
+
   connect();
 })();
 </script>

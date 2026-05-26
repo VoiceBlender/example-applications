@@ -237,10 +237,10 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = loginTemplate.Execute(w, loginPageData{
-			Role:    role,
-			Next:    sanitiseNext(r.URL.Query().Get("next"), role),
-			Failed:  r.URL.Query().Get("err") == "1",
-			Title:   loginTitleFor(role),
+			Role:   role,
+			Next:   sanitiseNext(r.URL.Query().Get("next"), role),
+			Failed: r.URL.Query().Get("err") == "1",
+			Title:  loginTitleFor(role),
 		})
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {

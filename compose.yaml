@@ -108,6 +108,11 @@ services:
       STT_PROVIDER: "elevenlabs"
       # STT_API_KEY: "sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
+      # ---------------------------------------------------- Transfer ------
+      # How long a blind transfer rings before auto-failing and restoring
+      # the customer to the original agent.
+      TRANSFER_RING_TIMEOUT: "${TRANSFER_RING_TIMEOUT:-30s}"
+
       # -------------------------------------------------- KPIs / metrics --
       # Service-level threshold and the rolling window used for SL/ASA/
       # AHT/Abandon/Longest-Wait on the supervisor's Metrics board.
