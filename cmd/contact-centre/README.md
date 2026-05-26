@@ -1,17 +1,28 @@
 # contact-centre
 
-A VoiceBlender example app that acts as the front door of a contact centre.
+A VoiceBlender example app that runs a complete inbound contact centre — waiting room, agent bridge, supervisor monitor, live transcription, and shift KPIs — out of a single Go binary.
 
-## Stage 1 — waiting room
+## Features
 
-What happens on each inbound SIP call:
+- **Inbound waiting room** with UK ringback (`gb_ringback`), welcome TTS, per-caller hold music, and live queue-position announcements (*"you are number 2 in the queue…"*).
+- **Configurable codec negotiation** — `ANSWER_CODECS` takes a preference list (`opus,PCMA,PCMU`) and the app picks the first one the caller actually offered.
+- **Agent dashboard** — username sign-in (or free name when auth is off), one-click *Take call*, mute, hold / resume, end call, log out. The WebRTC leg is established lazily on the first *Take call* and released when the call ends, so idle agents hold no media resources.
+- **Supervisor dashboard** — live call list, agent roster, *Listen* (silent monitor) and *Whisper* (un-mute to talk to the agent only), plus a rolling **Service KPIs** tile row (Service Level, ASA, AHT, Abandon Rate, Longest Wait).
+- **Live transcription** during every bridged call, attributed per speaker (customer / agent / supervisor) and rendered in a modal in both **LIVE** and **ARCHIVE** modes — the saved transcript is part of each call-log entry.
+- **Pluggable call log** — in-process ring buffer by default, Redis-backed for persistence across restarts.
+- **Optional static-password auth** for both panels with cookie sessions.
+- **Production-shaped deployment** — Dockerfile, Docker Compose, Caddy reverse proxy with automatic HTTPS via Let's Encrypt.
+
+## Per-call flow
+
+End-to-end on each inbound SIP call:
 
 1. **Ring.** Early media plays the UK ringback tone (`gb_ringback`) for ~3 seconds.
 2. **Answer.** The call is answered. Set `ANSWER_CODECS` to a comma-separated preference order (e.g. `opus,PCMA,PCMU`, from `PCMU`/`PCMA`/`G722`/`opus`) to choose the media codec for the early-media and answer SDP. The app picks the first codec in the list that the caller actually offered (from the `leg.ringing` `offered_codecs`); if none match — or it's unset — VoiceBlender falls back to its own default preference order.
 3. **Per-caller waiting room.** The caller is placed alone in a dedicated VoiceBlender room (`waiting-<leg_id>`). VoiceBlender's mixed-minus-self mixer guarantees callers cannot hear each other or each other's announcements.
 4. **Hold experience.** Hold music loops in the room. Every `ANNOUNCEMENT_INTERVAL` (default 20 s) the caller hears their live position in the queue: *"You are next in the queue. Thank you for holding."* or *"You are number 2 in the queue…"*. Position drops when an earlier caller hangs up.
-
-Subsequent stages (agent attach, transfer, real dequeueing) will be added later.
+5. **Agent pickup.** When an agent clicks *Take call*, the hold music stops, the agent's WebRTC leg joins the room, and the bridge goes live. Room-wide STT starts at the same moment; supervisors can join silently from this point.
+6. **Hangup.** Either side hangs up, the room is torn down, the call is appended to the call log together with its transcript, and the agent's WebRTC leg is released. The agent panel returns to *ready* and the next *Take call* establishes a fresh leg without re-prompting for the microphone.
 
 ## Live panels
 
@@ -25,7 +36,7 @@ When the supervisor clicks **Listen**, the browser opens a WebRTC connection to 
 
 Clicking **Whisper** acquires the microphone the first time (browser permission prompt), `replaceTrack`s the silent track for the mic on the existing peer connection, and un-mutes it. Subsequent toggles are a pure `track.enabled = !track.enabled` mute/unmute — no server round-trip, no matrix change, no extra WebRTC negotiation. Multiple supervisors monitoring the same call can whisper concurrently; each one's mute state is independent. Clicking **✕** in the header pill mutes while staying in the listen.
 
-**Agent panel** at <http://localhost:8090/agent> — name-only sign-in, then a live view of just the queued calls (ringing calls are hidden). The WebRTC audio leg into VoiceBlender (Opus, trickle ICE) is established **lazily, on the first "Take call" click** — sign-in no longer prompts for the microphone or allocates a server-side leg. When a call ends, the leg is torn down again (the browser remembers the mic grant, so later calls don't re-prompt). This keeps idle agents from holding open media resources. The header pill (`ready / mic init… / audio dialling / mic live / mic muted / mic failed`) reflects the audio state; clicking it after a failure resets to `ready`.
+**Agent panel** at <http://localhost:8090/agent> — sign-in (free name when `AGENT_PASSWORD` is unset; username + shared password otherwise — the username doubles as the agent's display name, so there's no second prompt), then a live view of just the queued calls (ringing calls are hidden). The WebRTC audio leg into VoiceBlender (Opus, trickle ICE) is established **lazily, on the first "Take call" click** — sign-in does not prompt for the microphone or allocate a server-side leg. When a call ends, the leg is torn down again (the browser remembers the mic grant, so later calls don't re-prompt). This keeps idle agents from holding open media resources. The header pill (`ready / mic init… / audio dialling / mic live / mic muted / mic failed`) reflects the audio state; clicking it after a failure resets to `ready`.
 
 The agent's WS at `/api/agent/stream` is the single channel: it carries queue snapshots **and** all WebRTC signaling. Sessions are in-memory; restart the server and agents need to sign in again.
 

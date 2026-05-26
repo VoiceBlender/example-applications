@@ -6,7 +6,7 @@ Reference applications built on [VoiceBlender](../VoiceBlender) using the [voice
 
 | Name | Description |
 |---|---|
-| [contact-centre](./cmd/contact-centre/) | Inbound SIP contact-centre front door. Stage 1: rings with UK ringback for 3 s, then drops each caller into their own isolated waiting room with looping hold music and live queue-position announcements. |
+| [contact-centre](./cmd/contact-centre/) | Complete inbound SIP contact centre in one binary. UK ringback → welcome TTS → per-caller waiting room with hold music and live queue-position announcements → one-click *Take call* on the agent dashboard → bridge with mute/hold/resume/hangup → live per-speaker transcription archived into the call log. Supervisor dashboard adds silent monitor (*Listen*), private side-channel (*Whisper*), and a rolling Service KPIs board (SL, ASA, AHT, Abandon, Longest Wait). Pluggable call-log backend (memory / Redis), optional static-password auth, configurable codec preference order. |
 
 ## Layout
 
