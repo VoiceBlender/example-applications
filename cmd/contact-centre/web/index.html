@@ -203,6 +203,159 @@ body::after {
 .listen-pill[data-state="failed"] .listen-stop { opacity: 1; pointer-events: auto; }
 .listen-stop:hover { color: var(--fg); }
 
+/* Supervisor "active call" panel — sits below the topbar and groups
+   the call state, caller/agent info, duration, and the single End
+   button. Visible only while the supervisor is on a consult or on a
+   transferred customer call. */
+/* Callcard — shared visual language with the agent panel: green for
+   on-call, amber for hold, cyan for consult/transferring. Mirrors the
+   .callcard block in agent.html. */
+.callcard {
+  border: 1px solid var(--green-dim, #2e7a52);
+  background:
+    linear-gradient(180deg, rgba(94,226,164,0.05), transparent 70%),
+    var(--bg-2);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  position: relative;
+}
+.callcard[hidden] { display: none; }
+.callcard::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 5%, var(--green) 50%, transparent 95%);
+  opacity: 0.7;
+}
+.callcard-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--green);
+  padding: 4px 10px;
+  border: 1px solid var(--green-dim, #2e7a52);
+  display: inline-flex; align-items: center; gap: 7px;
+  width: fit-content;
+}
+.callcard-tag .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(94,226,164,.35);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+.callcard-peer .cell-peer-user { font-size: 17px; }
+.callcard-peer .cell-peer-host { font-size: 12px; color: var(--fg-mute); }
+.callcard-dur {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.callcard-actions {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.cc-btn {
+  background: transparent;
+  border: 1px solid var(--border-bright, #2b3447);
+  color: var(--fg-dim);
+  padding: 7px 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 160ms, color 160ms, border-color 160ms;
+}
+.cc-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
+.cc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cc-btn[data-active="true"] {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: linear-gradient(180deg, rgba(255,169,64,0.08), transparent);
+}
+.cc-btn[data-active="true"]:hover { background: rgba(255,169,64,0.16); }
+.callcard-hangup {
+  background: transparent;
+  border: 1px solid var(--red);
+  color: var(--red);
+  padding: 7px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 160ms, color 160ms;
+}
+.callcard-hangup:hover { background: var(--red); color: var(--bg); }
+/* Hold-state variant (amber) */
+.callcard[data-state="hold"] {
+  border-color: var(--amber-dim, #8a5a1f);
+  background:
+    linear-gradient(180deg, rgba(255,169,64,0.05), transparent 70%),
+    var(--bg-2);
+}
+.callcard[data-state="hold"]::before {
+  background: linear-gradient(90deg, transparent 5%, var(--amber) 50%, transparent 95%);
+}
+.callcard[data-state="hold"] .callcard-tag {
+  color: var(--amber);
+  border-color: var(--amber-dim, #8a5a1f);
+}
+.callcard[data-state="hold"] .callcard-tag .dot { background: var(--amber); }
+.callcard[data-state="hold"] .callcard-dur { color: var(--amber); }
+/* Consult-state variant (cyan) — also used for the consult banner. */
+.callcard[data-state="consult"] {
+  border-color: var(--cyan-dim);
+  background:
+    linear-gradient(180deg, rgba(94,200,232,0.05), transparent 70%),
+    var(--bg-2);
+}
+.callcard[data-state="consult"]::before {
+  background: linear-gradient(90deg, transparent 5%, var(--cyan) 50%, transparent 95%);
+}
+.callcard[data-state="consult"] .callcard-tag {
+  color: var(--cyan);
+  border-color: var(--cyan-dim);
+}
+.callcard[data-state="consult"] .callcard-tag .dot { background: var(--cyan); }
+.callcard[data-state="consult"] .callcard-dur { color: var(--cyan); }
+/* Picker + status sub-rows on the call card */
+.callcard-transfer, .callcard-transfer-status {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.callcard-transfer[hidden], .callcard-transfer-status[hidden] { display: none; }
+/* Base select style — shared with the agent's intercom dropdown. The
+   callcard-transfer / sidebar overrides above set the flex sizing. */
+.intercom-select {
+  background: var(--bg);
+  border: 1px solid var(--border-bright);
+  color: var(--fg);
+  padding: 6px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.callcard-transfer .intercom-select { flex: 1 1 100%; min-width: 0; }
+.callcard-transfer-status [data-transfer-status-label] {
+  flex: 1 1 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
 /* ------------------------------------------------------------- stats -- */
 
 .stats {
@@ -1066,6 +1219,70 @@ body::after {
   animation: dotPulse 1.2s ease-in-out infinite;
 }
 .listen-pill[data-state="whispering"] .listen-stop { opacity: 1; pointer-events: auto; }
+
+/* ----------------------------------------------- two-column layout --- */
+/* Below the topbar, split the page into a main column (stats, metrics,
+   agents, queue, log, …) and a sticky right sidebar (call control +
+   contacts). Mirrors the agent panel's layout. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+  margin-top: 18px;
+}
+.layout-main { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.layout-side {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+}
+
+.side-panel {
+  background: var(--bg-2);
+  border: 1px solid var(--border-bright, #2b3447);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.side-panel-body { padding: 14px; }
+.side-panel-empty {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  padding: 22px 8px 12px;
+}
+.side-panel-hint {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-mute);
+  opacity: 0.7;
+}
+
+@media (max-width: 1080px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout-side { position: static; max-height: none; }
+}
 </style>
 </head>
 <body>
@@ -1093,21 +1310,11 @@ body::after {
         <span data-listen-label>not listening</span>
         <button class="listen-stop" data-listen-stop type="button" title="stop listening">✕</button>
       </div>
-      <div class="listen-pill intercom-pill" data-intercom-pill data-state="idle" hidden title="active intercom from an agent">
-        <span class="dot"></span>
-        <span data-intercom-label>intercom</span>
-        <button class="listen-stop" data-intercom-end type="button" title="end intercom">✕</button>
-      </div>
-      <div class="listen-pill intercom-pill" data-consult-pill data-state="idle" hidden title="consulting with an agent about a transfer">
-        <span class="dot"></span>
-        <span data-consult-label>consulting</span>
-        <button class="listen-stop" data-consult-end type="button" title="end consult">✕</button>
-      </div>
-      <div class="listen-pill intercom-pill" data-transfer-pill data-state="idle" hidden title="on a customer call that was transferred to you">
-        <span class="dot"></span>
-        <span data-transfer-label>transferred call</span>
-        <button class="listen-stop" data-transfer-end type="button" title="hang up customer">✕</button>
-      </div>
+      <!-- Active consult / transferred-call indicators used to live
+           here as topbar pills. They moved into the Call Control panel
+           (callcard + consult banner) so every active-call surface is
+           in one place. The listen-pill above stays because it's the
+           action surface for silent-monitor (a separate concept). -->
       <div class="stream" data-state="connecting" data-stream>
         <span class="stream-dot"></span>
         <span class="stream-label" data-stream-label>connecting</span>
@@ -1118,6 +1325,9 @@ body::after {
       </form>
     </div>
   </header>
+
+  <div class="layout">
+  <div class="layout-main">
 
   <section class="stats" data-stats-cols="4">
     <div class="stat" data-key="active">
@@ -1234,6 +1444,92 @@ body::after {
       <div class="empty-line">no calls yet</div>
     </div>
   </section>
+
+  </div><!-- /.layout-main -->
+
+  <aside class="layout-side">
+    <section class="side-panel">
+      <div class="side-panel-head"><span>Call Control</span></div>
+      <div class="side-panel-body">
+        <!-- Consult banner: shown while this supervisor is consulting
+             with an agent (the customer is on hold elsewhere). End call
+             rolls the customer back to the agent. -->
+        <div class="callcard" data-consult-banner data-state="consult" hidden>
+          <div class="callcard-tag"><span class="dot"></span><span>consulting</span></div>
+          <div class="callcard-peer cell-peer">
+            <div class="cell-peer-user" data-consult-from>—</div>
+            <div class="cell-peer-host" data-consult-caller></div>
+          </div>
+          <div class="callcard-dur" data-consult-dur>00:00</div>
+          <div class="callcard-actions">
+            <button class="callcard-hangup" data-consult-hangup type="button">End call</button>
+          </div>
+        </div>
+
+        <!-- Active transferred customer call. Same visual language as
+             the agent's callcard — Mute/Hold/Transfer/End on top, then
+             the picker (when open) or transferring status (during a
+             second-hop transfer initiated from here). -->
+        <div class="callcard" data-callcard data-state="active" hidden>
+          <div class="callcard-tag"><span class="dot"></span><span data-cc-tag>on call</span></div>
+          <div class="callcard-peer cell-peer">
+            <div class="cell-peer-user" data-cc-user>—</div>
+            <div class="cell-peer-host" data-cc-host></div>
+          </div>
+          <div class="callcard-dur" data-cc-dur>00:00</div>
+          <div class="callcard-actions">
+            <button class="cc-btn" data-mute-btn type="button">Mute</button>
+            <button class="cc-btn" data-hold-btn type="button">Hold</button>
+            <button class="cc-btn" data-transfer-btn type="button">Transfer…</button>
+            <button class="callcard-hangup" data-hangup-btn type="button">End call</button>
+          </div>
+          <div class="callcard-transfer" data-transfer-picker hidden>
+            <select class="intercom-select" data-transfer-target>
+              <option value="">— transfer to —</option>
+            </select>
+            <button class="cc-btn" data-transfer-blind type="button" disabled>Blind</button>
+            <button class="cc-btn" data-transfer-consult type="button" disabled>Consult</button>
+            <button class="cc-btn" data-transfer-close type="button">Cancel</button>
+          </div>
+          <div class="callcard-transfer-status" data-transfer-status hidden>
+            <span data-transfer-status-label>Transferring…</span>
+            <button class="cc-btn" data-transfer-complete type="button" hidden>Complete transfer</button>
+            <button class="cc-btn" data-transfer-cancel type="button">Cancel transfer</button>
+          </div>
+        </div>
+
+        <!-- Active intercom from an agent. End button hangs up the
+             agent-supervisor audio bridge. -->
+        <div class="callcard" data-intercom-card data-state="consult" hidden>
+          <div class="callcard-tag"><span class="dot"></span><span>intercom</span></div>
+          <div class="callcard-peer cell-peer">
+            <div class="cell-peer-user" data-intercom-card-name>—</div>
+            <div class="cell-peer-host">agent</div>
+          </div>
+          <div class="callcard-actions">
+            <button class="callcard-hangup" data-intercom-end-card type="button">End call</button>
+          </div>
+        </div>
+
+        <!-- Idle placeholder — shown when neither callcard nor consult
+             banner nor intercom is active. Dialpad for outbound calls
+             lands here. -->
+        <div data-sup-call-idle>
+          <div class="side-panel-empty">No active call</div>
+          <div class="side-panel-hint">Dialpad coming soon</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="side-panel">
+      <div class="side-panel-head"><span>Contacts</span></div>
+      <div class="side-panel-body">
+        <div class="side-panel-empty">No contacts yet</div>
+        <div class="side-panel-hint">Contact list coming soon</div>
+      </div>
+    </section>
+  </aside>
+  </div><!-- /.layout -->
 
   <div class="footline">VoiceBlender · contact-centre example · supervisor</div>
 </div>
@@ -1578,16 +1874,41 @@ body::after {
     renderCallLog(snap.call_log || []);
     renderMetrics(snap.metrics || null);
     applyListenState(snap.self ? snap.self.listening_room_id : null);
+    // Picker source data + own username (used to filter "transfer to me").
+    supSupervisorsOnline = Array.isArray(snap.supervisors) ? snap.supervisors : [];
+    supAgentsOnline      = Array.isArray(snap.agents) ? snap.agents : [];
+    if (snap.self && snap.self.username) supSelfUsername = snap.self.username;
+
     // Restore active transferred-customer-call state after WS reconnect.
+    // Always reads on_hold so the callcard tag/Hold button stay in sync.
     const selfTC = snap.self && snap.self.transferred_call;
     if (selfTC) {
-      if (!activeTransferCall || activeTransferCall.call_leg_id !== selfTC.call_leg_id) {
-        activeTransferCall = { call_leg_id: selfTC.call_leg_id, caller_from: selfTC.caller_from };
-        setActiveTransferPill(selfTC.caller_from || '—');
+      const isNew = !activeTransferCall || activeTransferCall.call_leg_id !== selfTC.call_leg_id;
+      activeTransferCall = {
+        call_leg_id: selfTC.call_leg_id,
+        caller_from: selfTC.caller_from,
+        on_hold:     !!selfTC.on_hold,
+      };
+      setActiveTransferPill(selfTC.caller_from || '—');
+      if (isNew) {
         for (const { row, call } of live.values()) updateRow(row, call);
       }
     } else if (!selfTC && activeTransferCall) {
       clearActiveTransferCall();
+    }
+    // Rehydrate in-flight transfer initiated by this supervisor.
+    const selfT = snap.self && snap.self.transfer;
+    if (selfT) {
+      supOutgoingTransfer = {
+        transfer_id: selfT.transfer_id,
+        state:       selfT.state,
+        target_kind: selfT.target_kind,
+        target:      selfT.target,
+        target_name: selfT.target_name,
+        attended:    !!selfT.attended,
+      };
+    } else if (supOutgoingTransfer) {
+      supOutgoingTransfer = null;
     }
     // Restore attended-consult state after a WS reconnect.
     const selfCs = snap.self && snap.self.consulting;
@@ -1606,6 +1927,7 @@ body::after {
       setConsultPill(null);
       for (const { row, call } of live.values()) updateRow(row, call);
     }
+    refreshSupCallPanel();
 
     // Restore intercom state after a WS reconnect mid-call. Live
     // transitions are driven by intercom.* pushes; this just covers
@@ -2348,12 +2670,19 @@ body::after {
   function sendWS(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
+  // Reset any modal/in-flight state that the snapshot won't restore.
+  // Idempotent.
+  function clearEphemeralOnDisconnect() {
+    if (typeof hideIncomingTransfer === 'function' && pendingTransfer) hideIncomingTransfer();
+    if (typeof hideIncomingIntercom === 'function' && pendingIntercom) hideIncomingIntercom();
+  }
+
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
     ws = new WebSocket(proto + location.host + '/api/calls/stream');
     setStream('connecting', 'connecting');
     ws.addEventListener('open', () => {
-      setStream('live', 'streaming');
+      setStream('live', 'connected');
       reconnectDelay = 700;
       // Server forgot our leg across reconnect — tear our side down so a
       // fresh listen click renegotiates.
@@ -2362,6 +2691,11 @@ body::after {
     ws.addEventListener('close', () => {
       setStream('lost', 'reconnecting');
       teardownPC();
+      // Drop ephemeral modal state — the server tore down any transfer
+      // we were the target of when our WS died, so a stale modal is
+      // misleading after reconnect. Snapshot rebuilds anything still
+      // valid (transferred_call, consulting, intercom, transfer).
+      clearEphemeralOnDisconnect();
       scheduleReconnect();
     });
     ws.addEventListener('error', () => { /* close fires too */ });
@@ -2383,6 +2717,9 @@ body::after {
         case 'transfer.cleared':    return onTransferCleared(msg);
         case 'transfer.active':     return onTransferActive(msg);
         case 'transfer.consulting': return onTransferConsulting(msg);
+        case 'transfer.state':      return onTransferState(msg);
+        case 'transfer.completed':  return onTransferCompleted(msg);
+        case 'transfer.failed':     return onTransferFailed(msg);
         case 'transfer.error':      return console.warn('[supervisor] transfer error:', msg.message);
       }
     });
@@ -2421,9 +2758,9 @@ body::after {
   const intercomNameEl  = $('[data-intercom-modal-name]');
   const intercomAnswerBtn = $('[data-intercom-answer]');
   const intercomRejectBtn = $('[data-intercom-reject]');
-  const intercomPillEl  = $('[data-intercom-pill]');
-  const intercomPillLabelEl = $('[data-intercom-label]');
-  const intercomPillEndBtn = $('[data-intercom-end]');
+  const intercomCardEl     = $('[data-intercom-card]');
+  const intercomCardNameEl = $('[data-intercom-card-name]');
+  const intercomEndCardBtn = $('[data-intercom-end-card]');
 
   // Tiny synthesised ringer — loops a soft two-tone "phone ring"
   // cadence while the modal is open. Web Audio so we ship no audio
@@ -2484,13 +2821,13 @@ body::after {
 
   function setActiveIntercomPill(name) {
     if (!name) {
-      intercomPillEl.hidden = true;
-      intercomPillEl.dataset.state = 'idle';
+      intercomCardEl.hidden = true;
+      refreshSupCallPanel();
       return;
     }
-    intercomPillEl.hidden = false;
-    intercomPillEl.dataset.state = 'active';
-    intercomPillLabelEl.textContent = 'intercom · ' + name;
+    intercomCardEl.hidden = false;
+    intercomCardNameEl.textContent = name;
+    refreshSupCallPanel();
   }
 
   function onIntercomIncoming(msg) {
@@ -2535,12 +2872,48 @@ body::after {
   const transferModalCallerEl = $('[data-transfer-modal-caller]');
   const transferAnswerBtn     = $('[data-transfer-modal-answer]');
   const transferRejectBtn     = $('[data-transfer-modal-reject]');
-  const transferPillEl        = $('[data-transfer-pill]');
-  const transferLabelEl       = $('[data-transfer-label]');
-  const transferEndBtn        = $('[data-transfer-end]');
-  const consultPillEl         = $('[data-consult-pill]');
-  const consultLabelEl        = $('[data-consult-label]');
-  const consultEndBtn         = $('[data-consult-end]');
+  // The topbar consult/transfer pills are gone — every active-call
+  // surface lives in the Call Control panel now. The setActiveTransferPill
+  // and setConsultPill helpers below are no-ops kept for call-site
+  // compatibility; the panel itself updates via refreshSupCallPanel.
+
+  // Callcard for the supervisor's active transferred customer call.
+  // Mirrors the agent's callcard: Mute / Hold / Transfer / End plus
+  // the same picker + status sub-rows for second-hop transfers.
+  const supCallIdleEl       = $('[data-sup-call-idle]');
+  const callcardEl          = $('[data-callcard]');
+  const ccTagEl             = $('[data-cc-tag]');
+  const ccUserEl            = $('[data-cc-user]');
+  const ccHostEl            = $('[data-cc-host]');
+  const ccDurEl             = $('[data-cc-dur]');
+  const muteBtn             = $('[data-mute-btn]');
+  const holdBtn             = $('[data-hold-btn]');
+  const transferBtnSup      = $('[data-transfer-btn]');
+  const hangupBtn           = $('[data-hangup-btn]');
+  const transferPickerEl    = $('[data-transfer-picker]');
+  const transferTargetSelEl = $('[data-transfer-target]');
+  const transferBlindBtn    = $('[data-transfer-blind]');
+  const transferConsultBtn  = $('[data-transfer-consult]');
+  const transferCloseBtn    = $('[data-transfer-close]');
+  const transferStatusEl    = $('[data-transfer-status]');
+  const transferStatusLbl   = $('[data-transfer-status-label]');
+  const transferCompleteBtn = $('[data-transfer-complete]');
+  const transferCancelBtn   = $('[data-transfer-cancel]');
+  // Consult banner (this supervisor is the TARGET of an attended consult).
+  const consultBannerEl     = $('[data-consult-banner]');
+  const consultFromEl       = $('[data-consult-from]');
+  const consultCallerEl     = $('[data-consult-caller]');
+  const consultDurEl        = $('[data-consult-dur]');
+  const consultHangupBtn    = $('[data-consult-hangup]');
+
+  let supCallStartedAt    = 0;
+  let supConsultStartedAt = 0;
+  let supMuted            = false;     // mic-track .enabled mirror
+  let supOutgoingTransfer = null;      // {transfer_id, state, target_kind, target, target_name, attended}
+  let supTransferPickerOpen = false;
+  let supSupervisorsOnline = [];
+  let supAgentsOnline      = [];
+  let supSelfUsername      = '';
 
   function showIncomingTransfer(msg) {
     pendingTransfer = msg;
@@ -2558,27 +2931,131 @@ body::after {
     transferModalEl.hidden = true;
     ringer.stop();
   }
-  function setActiveTransferPill(callerFrom) {
-    if (!callerFrom) {
-      transferPillEl.hidden = true;
-      transferPillEl.dataset.state = 'idle';
+  // No-op shim — pill removed from topbar; call panel renders this state.
+  function setActiveTransferPill(_callerFrom) {}
+
+  // Render the supervisor's callcard for an active transferred call,
+  // the consult banner (target-side consult), and the idle placeholder.
+  // Only one of the three is visible at a time — picker / status sub-
+  // rows live inside the callcard.
+  function refreshSupCallPanel() {
+    const callActive    = !!activeTransferCall;
+    const consultActive = !!activeConsult;
+
+    if (callActive) {
+      callcardEl.hidden = false;
+      const onHold = !!activeTransferCall.on_hold;
+      callcardEl.dataset.state = onHold ? 'hold' : 'active';
+      ccTagEl.textContent      = onHold ? 'on hold' : 'on call';
+      ccUserEl.textContent     = activeTransferCall.caller_from || '—';
+      ccHostEl.textContent     = '';
+      holdBtn.textContent      = onHold ? 'Resume' : 'Hold';
+      holdBtn.dataset.active   = onHold ? 'true' : 'false';
+      muteBtn.textContent      = supMuted ? 'Unmute' : 'Mute';
+      muteBtn.dataset.active   = supMuted ? 'true' : 'false';
+      if (!supCallStartedAt) supCallStartedAt = Date.now();
+    } else {
+      callcardEl.hidden = true;
+      supCallStartedAt = 0;
+      ccDurEl.textContent = '00:00';
+    }
+    refreshSupTransferUI();
+
+    if (consultActive) {
+      consultBannerEl.hidden = false;
+      consultFromEl.textContent = 'Consulting with ' + (activeConsult.from_name || '—');
+      consultCallerEl.textContent = activeConsult.caller_from ? 'caller: ' + activeConsult.caller_from : '';
+      if (!supConsultStartedAt) supConsultStartedAt = Date.now();
+    } else {
+      consultBannerEl.hidden = true;
+      supConsultStartedAt = 0;
+      consultDurEl.textContent = '00:00';
+    }
+
+    const intercomOn = !!activeIntercom;
+    supCallIdleEl.hidden = callActive || consultActive || intercomOn;
+  }
+
+  // Picker (Blind / Consult) + status sub-row management, parallel to
+  // the agent's call card.
+  function rebuildSupTransferTargets() {
+    if (!transferTargetSelEl) return;
+    const prev = transferTargetSelEl.value;
+    transferTargetSelEl.innerHTML = '<option value="">— transfer to —</option>';
+    const sups = supSupervisorsOnline.filter(u => u !== supSelfUsername);
+    if (sups.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Supervisors';
+      for (const u of sups) {
+        const opt = document.createElement('option');
+        opt.value = 'supervisor:' + u; opt.textContent = u;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      transferTargetSelEl.appendChild(grp);
+    }
+    // Agents idle enough to receive a transfer: online + not on a call.
+    const idleAgents = supAgentsOnline.filter(a => !a.current_call);
+    if (idleAgents.length > 0) {
+      const grp = document.createElement('optgroup');
+      grp.label = 'Agents';
+      for (const a of idleAgents) {
+        const opt = document.createElement('option');
+        opt.value = 'agent:' + a.agent_id; opt.textContent = a.name || a.agent_id;
+        if (opt.value === prev) opt.selected = true;
+        grp.appendChild(opt);
+      }
+      transferTargetSelEl.appendChild(grp);
+    }
+    const hasTarget = !!transferTargetSelEl.value;
+    transferBlindBtn.disabled = !hasTarget;
+    transferConsultBtn.disabled = !hasTarget;
+  }
+  function refreshSupTransferUI() {
+    if (!callcardEl) return;
+    if (supOutgoingTransfer && (supOutgoingTransfer.state === 'ringing' || supOutgoingTransfer.state === 'consulting')) {
+      transferBtnSup.hidden = true;
+      transferPickerEl.hidden = true;
+      transferStatusEl.hidden = false;
+      const name = supOutgoingTransfer.target_name || supOutgoingTransfer.target || '—';
+      if (supOutgoingTransfer.state === 'consulting') {
+        transferStatusLbl.textContent = 'Consulting with ' + name + ' · caller on hold';
+        transferCompleteBtn.hidden = false;
+      } else if (supOutgoingTransfer.attended) {
+        transferStatusLbl.textContent = 'Consult ringing ' + name + '…';
+        transferCompleteBtn.hidden = true;
+      } else {
+        transferStatusLbl.textContent = 'Transferring to ' + name + '…';
+        transferCompleteBtn.hidden = true;
+      }
+      transferCancelBtn.textContent = 'Cancel transfer';
+      supTransferPickerOpen = false;
       return;
     }
-    transferPillEl.hidden = false;
-    transferPillEl.dataset.state = 'active';
-    transferLabelEl.textContent = 'on call · ' + callerFrom;
-  }
-  function setConsultPill(consult) {
-    if (!consult) {
-      consultPillEl.hidden = true;
-      consultPillEl.dataset.state = 'idle';
+    transferStatusEl.hidden = true;
+    transferCompleteBtn.hidden = true;
+    if (!activeTransferCall) {
+      transferBtnSup.hidden = true;
+      transferPickerEl.hidden = true;
+      supTransferPickerOpen = false;
       return;
     }
-    consultPillEl.hidden = false;
-    consultPillEl.dataset.state = 'active';
-    const tail = consult.caller_from ? ' · ' + consult.caller_from : '';
-    consultLabelEl.textContent = 'consult · ' + (consult.from_name || '—') + tail;
+    transferBtnSup.hidden = false;
+    transferPickerEl.hidden = !supTransferPickerOpen;
+    if (supTransferPickerOpen) rebuildSupTransferTargets();
   }
+
+  // 1Hz duration tick for the callcard + consult banner.
+  setInterval(() => {
+    const fmt = ms => {
+      const s = Math.floor(ms / 1000);
+      return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+    };
+    if (supCallStartedAt) ccDurEl.textContent = fmt(Date.now() - supCallStartedAt);
+    if (supConsultStartedAt) consultDurEl.textContent = fmt(Date.now() - supConsultStartedAt);
+  }, 1000);
+  // No-op shim — pill removed from topbar; call panel renders this state.
+  function setConsultPill(_consult) {}
 
   function onTransferIncoming(msg) {
     if (activeIntercom || activeTransferCall || activeConsult) {
@@ -2594,6 +3071,7 @@ body::after {
     if (activeConsult && activeConsult.transfer_id === msg.transfer_id) {
       activeConsult = null;
       setConsultPill(null);
+      refreshSupCallPanel();
       for (const { row, call } of live.values()) updateRow(row, call);
     }
   }
@@ -2604,12 +3082,21 @@ body::after {
     activeConsult = null;
     setConsultPill(null);
     setActiveTransferPill(msg.caller_from || '—');
+    refreshSupCallPanel();
     // Refresh row buttons to disable Listen on every other call.
     for (const { row, call } of live.values()) updateRow(row, call);
   }
   function onTransferConsulting(msg) {
-    // Supervisor is the target of an attended consult — close the modal
-    // (audio came up via answer) and light the consult pill.
+    // Originator branch: this supervisor started the transfer — flip
+    // our outgoing transfer to consulting and let refreshSupCallPanel
+    // swap the picker for the Complete/Cancel status row.
+    if (supOutgoingTransfer && supOutgoingTransfer.transfer_id === msg.transfer_id) {
+      supOutgoingTransfer.state = 'consulting';
+      refreshSupCallPanel();
+      return;
+    }
+    // Target branch: someone consult-transferred TO this supervisor —
+    // close the incoming modal and show the consult banner.
     if (pendingTransfer && pendingTransfer.transfer_id === msg.transfer_id) {
       hideIncomingTransfer();
     }
@@ -2619,11 +3106,13 @@ body::after {
       caller_from: msg.caller_from,
     };
     setConsultPill(activeConsult);
+    refreshSupCallPanel();
     for (const { row, call } of live.values()) updateRow(row, call);
   }
   function clearActiveTransferCall() {
     activeTransferCall = null;
     setActiveTransferPill('');
+    refreshSupCallPanel();
     for (const { row, call } of live.values()) updateRow(row, call);
   }
 
@@ -2632,6 +3121,11 @@ body::after {
     const id = pendingTransfer.transfer_id;
     const ready = await ensureListenPC();
     if (!ready) return;
+    // Supervisor will be talking to the customer (blind) or to the
+    // agent (consult), so swap the silent listen track for the real
+    // mic. setWhispering does the acquire-and-replace dance.
+    await setWhispering(true);
+    supMuted = false;
     sendWS({ type: 'transfer.answer', transfer_id: id });
   });
   transferRejectBtn.addEventListener('click', () => {
@@ -2639,22 +3133,95 @@ body::after {
     sendWS({ type: 'transfer.reject', transfer_id: pendingTransfer.transfer_id });
     hideIncomingTransfer();
   });
-  transferEndBtn.addEventListener('click', () => {
+  // Callcard primary actions (transferred customer call).
+  hangupBtn.addEventListener('click', () => {
     if (!activeTransferCall) return;
     sendWS({ type: 'transfer.hangup', transfer_id: '' });
-    // The customer-leg hangup propagates server-side; we'll lose the
-    // session.transferred_call on the next snapshot. Clear now for
-    // responsiveness.
     clearActiveTransferCall();
   });
-  consultEndBtn.addEventListener('click', () => {
+  holdBtn.addEventListener('click', () => {
+    if (!activeTransferCall) return;
+    sendWS({ type: activeTransferCall.on_hold ? 'call.resume' : 'call.hold' });
+  });
+  muteBtn.addEventListener('click', async () => {
+    supMuted = !supMuted;
+    // Acquire mic on first toggle so the customer can actually hear us.
+    // setWhispering doubles as our mic acquisition path (replaces the
+    // silent track with the real mic and toggles .enabled).
+    await setWhispering(!supMuted);
+    refreshSupCallPanel();
+  });
+
+  // Consult banner action (target-side consult — supervisor rejects).
+  consultHangupBtn.addEventListener('click', () => {
     if (!activeConsult) return;
     sendWS({ type: 'transfer.reject', transfer_id: activeConsult.transfer_id });
-    // Server pushes transfer.cleared back (which also clears state),
-    // but flush locally too so the pill disappears immediately.
     activeConsult = null;
     setConsultPill(null);
+    refreshSupCallPanel();
   });
+
+  // Transfer picker (Blind / Consult / Cancel).
+  transferBtnSup.addEventListener('click', () => {
+    supTransferPickerOpen = !supTransferPickerOpen;
+    refreshSupCallPanel();
+  });
+  transferCloseBtn.addEventListener('click', () => {
+    supTransferPickerOpen = false;
+    refreshSupCallPanel();
+  });
+  transferTargetSelEl.addEventListener('change', () => {
+    const hasTarget = !!transferTargetSelEl.value;
+    transferBlindBtn.disabled = !hasTarget;
+    transferConsultBtn.disabled = !hasTarget;
+  });
+  function supSendTransferStart(attended) {
+    const v = transferTargetSelEl.value;
+    if (!v || !activeTransferCall) return;
+    const colon = v.indexOf(':');
+    const kind = v.slice(0, colon), target = v.slice(colon + 1);
+    sendWS({ type: 'transfer.start', target_kind: kind, target, attended });
+    supTransferPickerOpen = false;
+    refreshSupCallPanel();
+  }
+  transferBlindBtn.addEventListener('click', () => supSendTransferStart(false));
+  transferConsultBtn.addEventListener('click', () => supSendTransferStart(true));
+  transferCancelBtn.addEventListener('click', () => {
+    if (!supOutgoingTransfer) return;
+    sendWS({ type: 'transfer.cancel', transfer_id: supOutgoingTransfer.transfer_id });
+  });
+  transferCompleteBtn.addEventListener('click', () => {
+    if (!supOutgoingTransfer || supOutgoingTransfer.state !== 'consulting') return;
+    sendWS({ type: 'transfer.complete', transfer_id: supOutgoingTransfer.transfer_id });
+  });
+
+  // Originator-side transfer events (supervisor initiated a transfer).
+  function onTransferState(msg) {
+    supOutgoingTransfer = {
+      transfer_id: msg.transfer_id,
+      state: msg.state || 'ringing',
+      target_kind: msg.target_kind,
+      target: msg.target,
+      target_name: msg.target_name,
+      attended: !!msg.attended,
+    };
+    refreshSupCallPanel();
+  }
+  function onTransferCompleted(_msg) {
+    // Customer is now with the target. Our supervisorActiveCalls entry
+    // will be cleared by the server's finalize step; the next snapshot
+    // hides the callcard. Clear local state right away so the UI doesn't
+    // briefly show stale buttons.
+    supOutgoingTransfer = null;
+    activeTransferCall = null;
+    setActiveTransferPill('');
+    refreshSupCallPanel();
+  }
+  function onTransferFailed(_msg) {
+    // Transfer attempt died — supervisor stays on the customer call.
+    supOutgoingTransfer = null;
+    refreshSupCallPanel();
+  }
   transferModalEl.addEventListener('click', (ev) => {
     if (ev.target === transferModalEl) transferRejectBtn.click();
   });
@@ -2676,7 +3243,7 @@ body::after {
     sendWS({ type: 'intercom.reject', intercom_id: pendingIntercom.intercom_id });
     hideIncomingIntercom();
   });
-  intercomPillEndBtn.addEventListener('click', () => {
+  intercomEndCardBtn.addEventListener('click', () => {
     if (!activeIntercom) return;
     sendWS({ type: 'intercom.hangup', intercom_id: activeIntercom.intercom_id });
   });

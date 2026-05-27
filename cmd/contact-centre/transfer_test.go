@@ -9,10 +9,10 @@ import (
 func TestTransferCreateRejectsDoubleForSameCall(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	if _, err := r.Create("call-1", "waiting-call-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", false); err != nil {
+	if _, err := r.Create("call-1", "waiting-call-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", false); err != nil {
 		t.Fatalf("first Create: %v", err)
 	}
-	if _, err := r.Create("call-1", "waiting-call-1", ag, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err == nil {
+	if _, err := r.Create("call-1", "waiting-call-1", ag.ID, ag.Name, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err == nil {
 		t.Fatal("second Create on same call should have failed")
 	}
 }
@@ -20,7 +20,7 @@ func TestTransferCreateRejectsDoubleForSameCall(t *testing.T) {
 func TestTransferCreateUnknownKindFails(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	if _, err := r.Create("call-1", "room-1", ag, "robot", "x", "X", "leg-a", false); err == nil {
+	if _, err := r.Create("call-1", "room-1", ag.ID, ag.Name, "robot", "x", "X", "leg-a", false); err == nil {
 		t.Fatal("unknown target kind should have errored")
 	}
 }
@@ -28,7 +28,7 @@ func TestTransferCreateUnknownKindFails(t *testing.T) {
 func TestTransferClaimAnswerIsAtomic(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	tr, err := r.Create("call-1", "room-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", false)
+	tr, err := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestTransferClaimAnswerIsAtomic(t *testing.T) {
 func TestTransferCancelFromRingingFreesByCall(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	tr, err := r.Create("call-1", "room-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", false)
+	tr, err := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,11 +68,11 @@ func TestTransferCancelFromRingingFreesByCall(t *testing.T) {
 	}
 	// Cancel keeps the record in the registry until Settle, so the call
 	// slot is still occupied here.
-	if _, err := r.Create("call-1", "room-1", ag, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err == nil {
+	if _, err := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err == nil {
 		t.Errorf("Create after Cancel (no Settle) should fail — slot still held")
 	}
 	r.Settle(tr.ID)
-	if _, err := r.Create("call-1", "room-1", ag, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err != nil {
+	if _, err := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetSupervisor, "alice", "alice", "leg-a", false); err != nil {
 		t.Errorf("Create after Settle should succeed; got %v", err)
 	}
 }
@@ -81,8 +81,8 @@ func TestTransferByCallAndByTarget(t *testing.T) {
 	r := newTransferRegistry()
 	a1 := &agent{ID: "a1", Name: "Alice"}
 	a2 := &agent{ID: "a2", Name: "Bob"}
-	t1, _ := r.Create("call-1", "room-1", a1, intercomTargetAgent, "a3", "Carol", "leg-a1", false)
-	t2, _ := r.Create("call-2", "room-2", a2, intercomTargetSupervisor, "alice", "alice", "leg-a2", false)
+	t1, _ := r.Create("call-1", "room-1", a1.ID, a1.Name, intercomTargetAgent, "a3", "Carol", "leg-a1", false)
+	t2, _ := r.Create("call-2", "room-2", a2.ID, a2.Name, intercomTargetSupervisor, "alice", "alice", "leg-a2", false)
 
 	if got := r.ByCall("call-1"); got == nil || got.ID != t1.ID {
 		t.Errorf("ByCall(call-1) = %+v, want %s", got, t1.ID)
@@ -104,7 +104,7 @@ func TestTransferByFromAgent(t *testing.T) {
 	if got := r.ByFromAgent("a1"); got != nil {
 		t.Errorf("ByFromAgent before Create should be nil; got %+v", got)
 	}
-	tr, _ := r.Create("call-1", "room-1", ag, intercomTargetSupervisor, "alice", "alice", "leg-a", false)
+	tr, _ := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetSupervisor, "alice", "alice", "leg-a", false)
 	if got := r.ByFromAgent("a1"); got == nil || got.ID != tr.ID {
 		t.Errorf("ByFromAgent after Create = %+v, want %s", got, tr.ID)
 	}
@@ -118,7 +118,7 @@ func TestTransferByFromAgent(t *testing.T) {
 func TestTransferAttendedClaimAnswerKeepsConsulting(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	tr, err := r.Create("call-1", "room-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", true)
+	tr, err := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", true)
 	if err != nil {
 		t.Fatalf("Create attended: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestTransferAttendedClaimAnswerKeepsConsulting(t *testing.T) {
 func TestTransferAttendedCancelDuringConsulting(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	tr, _ := r.Create("call-1", "room-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", true)
+	tr, _ := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", true)
 	if _, ok := r.ClaimAnswer(tr.ID, "leg-b"); !ok {
 		t.Fatal("ClaimAnswer should succeed")
 	}
@@ -172,7 +172,7 @@ func TestTransferAttendedCancelDuringConsulting(t *testing.T) {
 func TestTransferBlindClaimAnswerCompletes(t *testing.T) {
 	r := newTransferRegistry()
 	ag := &agent{ID: "a1", Name: "Alice"}
-	tr, _ := r.Create("call-1", "room-1", ag, intercomTargetAgent, "a2", "Bob", "leg-a", false)
+	tr, _ := r.Create("call-1", "room-1", ag.ID, ag.Name, intercomTargetAgent, "a2", "Bob", "leg-a", false)
 	if tr.ConsultRoomID != "" {
 		t.Fatal("blind transfer should not have ConsultRoomID")
 	}

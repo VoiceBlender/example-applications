@@ -926,6 +926,94 @@ input  { font: inherit; }
 @keyframes rowGlow { from { opacity: 0.9; } to { opacity: 0; } }
 @keyframes sweep { 0% { left: -40%; } 100% { left: 100%; } }
 
+/* ----------------------------------------------- two-column layout --- */
+/* Below the topbar, the page splits into a main column (queue + stats)
+   and a sticky right sidebar (call control panel + contact list). */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+  margin-top: 18px;
+}
+.layout-main { min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+.layout-side {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Generic side-panel chrome — shared by the call panel and the
+   contacts panel so they look like siblings. */
+.side-panel {
+  background: var(--bg-2);
+  border: 1px solid var(--border-bright);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.side-panel-body { padding: 14px; }
+.side-panel-empty {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  padding: 22px 8px 12px;
+}
+.side-panel-hint {
+  margin-top: 8px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-mute);
+  opacity: 0.7;
+}
+
+/* Compact callcard variant: when the call card / consult banner live
+   inside the sidebar, they stack vertically instead of the wide
+   4-column grid the original was designed for. */
+.layout-side .callcard {
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 4px 0 0;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto auto auto;
+  gap: 12px;
+  animation: none;
+  opacity: 1;
+}
+.layout-side .callcard::before { display: none; }
+.layout-side .callcard-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.layout-side .cc-btn,
+.layout-side .callcard-hangup { padding: 7px 10px; }
+.layout-side .callcard-dur { font-size: 18px; }
+.layout-side .callcard-transfer { flex-wrap: wrap; }
+.layout-side .callcard-transfer .intercom-select { flex: 1 1 100%; }
+
+@media (max-width: 1080px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .layout-side { position: static; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -1012,21 +1100,12 @@ input  { font: inherit; }
             <span data-audio-label>ready</span>
           </span>
         </div>
-        <div class="intercom-widget" data-intercom>
-          <select class="intercom-select" data-intercom-target hidden title="online supervisors and agents">
-            <option value="">— call —</option>
-          </select>
-          <button class="intercom-btn" data-intercom-call type="button" hidden disabled>Call</button>
-          <span class="intercom-pill" data-intercom-pill data-state="idle" hidden>
-            <span class="dot"></span>
-            <span data-intercom-label>idle</span>
-            <button class="intercom-end" data-intercom-end type="button" title="hang up">✕</button>
-          </span>
-        </div>
         <button class="logout-btn" data-logout>Log out</button>
       </div>
     </header>
 
+    <div class="layout">
+    <div class="layout-main">
     <section class="stats">
       <div class="stat" data-key="queued">
         <div class="stat-label">in queue</div>
@@ -1039,46 +1118,6 @@ input  { font: inherit; }
         <div class="stat-trail">since join</div>
       </div>
     </section>
-
-    <div class="callcard" data-consult-banner data-state="consult" hidden>
-      <div class="callcard-tag"><span class="dot"></span><span>consulting</span></div>
-      <div class="callcard-peer cell-peer">
-        <div class="cell-peer-user" data-consult-from>—</div>
-        <div class="cell-peer-host" data-consult-caller></div>
-      </div>
-      <div class="callcard-dur" data-consult-dur>00:00</div>
-      <div class="callcard-actions">
-        <button class="callcard-hangup" data-consult-hangup type="button">Hang up</button>
-      </div>
-    </div>
-
-    <div class="callcard" data-callcard data-state="active" hidden>
-      <div class="callcard-tag"><span class="dot"></span><span data-cc-tag>on call</span></div>
-      <div class="callcard-peer cell-peer">
-        <div class="cell-peer-user" data-cc-user>—</div>
-        <div class="cell-peer-host" data-cc-host></div>
-      </div>
-      <div class="callcard-dur" data-cc-dur>00:00</div>
-      <div class="callcard-actions">
-        <button class="cc-btn" data-mute-btn type="button">Mute</button>
-        <button class="cc-btn" data-hold-btn type="button">Hold</button>
-        <button class="cc-btn" data-transfer-btn type="button">Transfer…</button>
-        <button class="callcard-hangup" data-hangup-btn type="button">End call</button>
-      </div>
-      <div class="callcard-transfer" data-transfer-picker hidden>
-        <select class="intercom-select" data-transfer-target>
-          <option value="">— transfer to —</option>
-        </select>
-        <button class="cc-btn" data-transfer-blind type="button" disabled>Blind</button>
-        <button class="cc-btn" data-transfer-consult type="button" disabled>Consult</button>
-        <button class="cc-btn" data-transfer-close type="button">Cancel</button>
-      </div>
-      <div class="callcard-transfer-status" data-transfer-status hidden>
-        <span data-transfer-status-label>Transferring…</span>
-        <button class="cc-btn" data-transfer-complete type="button" hidden>Complete transfer</button>
-        <button class="cc-btn" data-transfer-cancel type="button">Cancel transfer</button>
-      </div>
-    </div>
 
     <main class="board">
       <div class="board-head">
@@ -1099,6 +1138,97 @@ input  { font: inherit; }
         <div class="empty-sub">awaiting callers</div>
       </div>
     </main>
+    </div><!-- /.layout-main -->
+
+    <aside class="layout-side">
+      <section class="side-panel" data-call-panel>
+        <div class="side-panel-head">
+          <span>Call Control</span>
+        </div>
+        <div class="side-panel-body">
+          <!-- target-side attended consult banner (no customer call yet) -->
+          <div class="callcard" data-consult-banner data-state="consult" hidden>
+            <div class="callcard-tag"><span class="dot"></span><span>consulting</span></div>
+            <div class="callcard-peer cell-peer">
+              <div class="cell-peer-user" data-consult-from>—</div>
+              <div class="cell-peer-host" data-consult-caller></div>
+            </div>
+            <div class="callcard-dur" data-consult-dur>00:00</div>
+            <div class="callcard-actions">
+              <button class="callcard-hangup" data-consult-hangup type="button">End call</button>
+            </div>
+          </div>
+
+          <!-- active customer call -->
+          <div class="callcard" data-callcard data-state="active" hidden>
+            <div class="callcard-tag"><span class="dot"></span><span data-cc-tag>on call</span></div>
+            <div class="callcard-peer cell-peer">
+              <div class="cell-peer-user" data-cc-user>—</div>
+              <div class="cell-peer-host" data-cc-host></div>
+            </div>
+            <div class="callcard-dur" data-cc-dur>00:00</div>
+            <div class="callcard-actions">
+              <button class="cc-btn" data-mute-btn type="button">Mute</button>
+              <button class="cc-btn" data-hold-btn type="button">Hold</button>
+              <button class="cc-btn" data-transfer-btn type="button">Transfer…</button>
+              <button class="callcard-hangup" data-hangup-btn type="button">End call</button>
+            </div>
+            <div class="callcard-transfer" data-transfer-picker hidden>
+              <select class="intercom-select" data-transfer-target>
+                <option value="">— transfer to —</option>
+              </select>
+              <button class="cc-btn" data-transfer-blind type="button" disabled>Blind</button>
+              <button class="cc-btn" data-transfer-consult type="button" disabled>Consult</button>
+              <button class="cc-btn" data-transfer-close type="button">Cancel</button>
+            </div>
+            <div class="callcard-transfer-status" data-transfer-status hidden>
+              <span data-transfer-status-label>Transferring…</span>
+              <button class="cc-btn" data-transfer-complete type="button" hidden>Complete transfer</button>
+              <button class="cc-btn" data-transfer-cancel type="button">Cancel transfer</button>
+            </div>
+          </div>
+
+          <!-- Active or ringing intercom (agent ↔ agent, agent ↔ supervisor).
+               Shown when a peer-to-peer audio bridge with a colleague is up. -->
+          <div class="callcard" data-intercom-card data-state="consult" hidden>
+            <div class="callcard-tag"><span class="dot"></span><span data-intercom-card-tag>intercom</span></div>
+            <div class="callcard-peer cell-peer">
+              <div class="cell-peer-user" data-intercom-card-name>—</div>
+              <div class="cell-peer-host" data-intercom-card-sub></div>
+            </div>
+            <div class="callcard-actions">
+              <button class="callcard-hangup" data-intercom-end-card type="button">End call</button>
+            </div>
+          </div>
+
+          <!-- Intercom picker — visible when idle (no customer call /
+               intercom / consult) AND at least one colleague is online.
+               Picks a supervisor or another agent to call. -->
+          <div class="callcard-transfer" data-intercom-picker hidden style="padding-top:0; border-top:none; margin-top:0;">
+            <select class="intercom-select" data-intercom-target>
+              <option value="">— call colleague —</option>
+            </select>
+            <button class="cc-btn" data-intercom-call type="button" disabled>Call</button>
+          </div>
+
+          <!-- idle placeholder — visible when nothing else is. Dialpad
+               for outbound calls lands here in a future change. -->
+          <div data-call-panel-idle>
+            <div class="side-panel-empty">No active call</div>
+            <div class="side-panel-hint">Dialpad coming soon</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="side-panel">
+        <div class="side-panel-head"><span>Contacts</span></div>
+        <div class="side-panel-body">
+          <div class="side-panel-empty">No contacts yet</div>
+          <div class="side-panel-hint">Contact list coming soon</div>
+        </div>
+      </section>
+    </aside>
+    </div><!-- /.layout -->
 
     <div class="footline">VoiceBlender · contact-centre example · agent</div>
   </section>
@@ -1193,6 +1323,7 @@ input  { font: inherit; }
   const audioLabelEl = $('[data-audio-label]');
   const audioSinkEl  = $('#agent-audio');
   const callcardEl   = $('[data-callcard]');
+  const callPanelIdleEl = $('[data-call-panel-idle]');
   const ccUserEl     = $('[data-cc-user]');
   const ccHostEl     = $('[data-cc-host]');
   const ccDurEl      = $('[data-cc-dur]');
@@ -1358,12 +1489,23 @@ input  { font: inherit; }
     }
   }
 
+  // Reset any modal/in-flight state that the snapshot won't restore.
+  // Idempotent — safe to call before bootstrap as well.
+  function clearEphemeralOnDisconnect() {
+    if (typeof hideIncomingTransfer === 'function' && incomingTransfer) hideIncomingTransfer();
+    if (typeof hideIncomingIntercomModal === 'function' && incomingIntercom) hideIncomingIntercomModal();
+    takingCall = false;
+    if (typeof refreshTakeButtons === 'function') refreshTakeButtons();
+  }
+
   function connect(agentID) {
     const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
     ws = new WebSocket(proto + location.host + '/api/agent/stream?agent_id=' + encodeURIComponent(agentID));
     setStream('connecting', 'connecting');
+    let opened = false;
     ws.addEventListener('open', () => {
-      setStream('live', 'streaming');
+      opened = true;
+      setStream('live', 'connected');
       reconnectDelay = 700;
       // Audio is established lazily on the first 'Take call' click — no
       // mic prompt at sign-in. Tear down any pre-existing PC so the next
@@ -1375,6 +1517,21 @@ input  { font: inherit; }
     ws.addEventListener('close', () => {
       setStream('lost', 'reconnecting');
       stopAudio();
+      // Drop any in-flight modals. The server tears down any transfer
+      // we were the target of when our WS dies — so leaving the modal
+      // visible after reconnect would be a stale prompt. The snapshot
+      // arriving on reconnect rebuilds anything that's actually still
+      // valid (current_call, self.transfer, self.consulting, etc.).
+      clearEphemeralOnDisconnect();
+      // If we never managed to open the socket, the handshake itself
+      // failed — usually because the server forgot our agent (grace
+      // expired during a long outage, or the process restarted). Probe
+      // the agent record and re-register if it's really gone, instead
+      // of looping forever on a dead id.
+      if (!opened) {
+        recoverFromBadAgentID(agentID);
+        return;
+      }
       scheduleReconnect(agentID);
     });
     ws.addEventListener('message', (m) => {
@@ -1406,6 +1563,33 @@ input  { font: inherit; }
   function scheduleReconnect(agentID) {
     setTimeout(() => connect(agentID), reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 1.6, 6000);
+  }
+
+  // Called when the WS upgrade fails (close before open). Most likely
+  // cause is the server forgot our agent record (grace expired or
+  // process restarted). Probes /api/agents/whoami:
+  //   - 200 → agent still alive; transient failure, fall back to normal
+  //           exponential-backoff reconnect.
+  //   - 401 → auth cookie is gone; bootstrap() shows the login form.
+  //   - 404 → agent forgotten but cookie still valid; bootstrap()
+  //           re-registers a fresh agent from the cookie's username.
+  //   - network error → retry the probe itself with backoff so we
+  //           handle the "server briefly down" case too.
+  async function recoverFromBadAgentID(agentID) {
+    try {
+      const res = await fetch('/api/agents/whoami?agent_id=' + encodeURIComponent(agentID));
+      if (res.ok) {
+        scheduleReconnect(agentID);
+        return;
+      }
+      // 401 or 404 (or anything else): the id is no longer usable.
+      localStorage.removeItem(LS_ID);
+      localStorage.removeItem(LS_NAME);
+      bootstrap();
+    } catch {
+      setTimeout(() => recoverFromBadAgentID(agentID), reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 1.6, 6000);
+    }
   }
 
   // -- WebRTC --------------------------------------------------------------
@@ -1602,6 +1786,18 @@ input  { font: inherit; }
     }
   }
 
+  // Toggle the "No active call" placeholder in the sidebar. Visible
+  // only when nothing else is taking up the panel — the call card, the
+  // target-side consult banner, the active/ringing intercom card, and
+  // the intercom picker all suppress it.
+  function refreshCallPanelIdle() {
+    if (!callPanelIdleEl) return;
+    const intercomCardOn   = typeof intercomCardEl   !== 'undefined' && !intercomCardEl.hidden;
+    const intercomPickerOn = typeof intercomPickerEl !== 'undefined' && !intercomPickerEl.hidden;
+    const anythingActive = !callcardEl.hidden || !consultBannerEl.hidden || intercomCardOn || intercomPickerOn;
+    callPanelIdleEl.hidden = anythingActive;
+  }
+
   function renderCurrentCall(call) {
     const wasOnCall = !!currentCall;
     currentCall = call || null;
@@ -1620,6 +1816,7 @@ input  { font: inherit; }
       holdBtn.textContent = 'Hold';
       holdBtn.dataset.active = 'false';
       refreshTakeButtons();
+      refreshCallPanelIdle();
       return;
     }
     const peer = parsePeer(currentCall.from);
@@ -1633,6 +1830,7 @@ input  { font: inherit; }
     callcardEl.hidden = false;
     refreshTakeButtons();
     refreshIntercomWidget();
+    refreshCallPanelIdle();
   }
 
   // -- render ---------------------------------------------------------------
@@ -1861,11 +2059,14 @@ input  { font: inherit; }
   // shows "ringing <target>" + ✕ to cancel; active → pill shows
   // "intercom · <target>" + ✕ to hang up. Audio leg lifecycle matches
   // the per-call pattern: prep on Call, release on intercom.ended.
-  const intercomSelectEl = $('[data-intercom-target]');
-  const intercomCallBtn  = $('[data-intercom-call]');
-  const intercomPillEl   = $('[data-intercom-pill]');
-  const intercomLabelEl  = $('[data-intercom-label]');
-  const intercomEndBtn   = $('[data-intercom-end]');
+  const intercomSelectEl     = $('[data-intercom-target]');
+  const intercomCallBtn      = $('[data-intercom-call]');
+  const intercomPickerEl     = $('[data-intercom-picker]');
+  const intercomCardEl       = $('[data-intercom-card]');
+  const intercomCardTagEl    = $('[data-intercom-card-tag]');
+  const intercomCardNameEl   = $('[data-intercom-card-name]');
+  const intercomCardSubEl    = $('[data-intercom-card-sub]');
+  const intercomEndCardBtn   = $('[data-intercom-end-card]');
 
   // Dropdown values are encoded as "<kind>:<id>" so a single <select>
   // can mix supervisors and agents cleanly.
@@ -1880,27 +2081,32 @@ input  { font: inherit; }
   }
 
   function refreshIntercomWidget() {
+    // Active or ringing intercom → callcard view.
     if (currentIntercom) {
-      intercomSelectEl.hidden = true;
-      intercomCallBtn.hidden = true;
-      intercomPillEl.hidden = false;
-      intercomPillEl.dataset.state = currentIntercom.state || 'ringing';
+      intercomPickerEl.hidden = true;
+      intercomCardEl.hidden = false;
       const label = displayLabelFor(currentIntercom);
-      intercomLabelEl.textContent = currentIntercom.state === 'active'
-        ? 'intercom · ' + label
-        : 'ringing ' + label + '…';
+      intercomCardTagEl.textContent = currentIntercom.state === 'active' ? 'intercom' : 'ringing';
+      intercomCardNameEl.textContent = label;
+      intercomCardSubEl.textContent = currentIntercom.target_kind === 'supervisor' ? 'supervisor' : 'agent';
+      refreshCallPanelIdle();
       return;
     }
-    intercomPillEl.hidden = true;
-    intercomPillEl.dataset.state = 'idle';
+    intercomCardEl.hidden = true;
+    // Picker only shows when truly idle AND at least one colleague is online.
+    const busy = !!currentCall || !!incomingConsult || takingCall;
     const haveTargets = supervisorsOnline.length > 0 || agentsOnline.length > 0;
-    intercomSelectEl.hidden = !haveTargets;
-    intercomCallBtn.hidden = !haveTargets;
+    if (busy || !haveTargets) {
+      intercomPickerEl.hidden = true;
+      refreshCallPanelIdle();
+      return;
+    }
+    intercomPickerEl.hidden = false;
     // Rebuild option list, preserving the current pick if still present.
     const prev = intercomSelectEl.value;
     intercomSelectEl.innerHTML = '';
     const placeholder = document.createElement('option');
-    placeholder.value = ''; placeholder.textContent = '— call —';
+    placeholder.value = ''; placeholder.textContent = '— call colleague —';
     intercomSelectEl.appendChild(placeholder);
     if (supervisorsOnline.length > 0) {
       const grp = document.createElement('optgroup');
@@ -1926,8 +2132,8 @@ input  { font: inherit; }
       }
       intercomSelectEl.appendChild(grp);
     }
-    const blocked = !!currentCall || takingCall;
-    intercomCallBtn.disabled = blocked || !intercomSelectEl.value;
+    intercomCallBtn.disabled = !intercomSelectEl.value;
+    refreshCallPanelIdle();
   }
 
   async function onIntercomCallClick() {
@@ -2008,7 +2214,7 @@ input  { font: inherit; }
   }
 
   intercomCallBtn.addEventListener('click', onIntercomCallClick);
-  intercomEndBtn.addEventListener('click', onIntercomEndClick);
+  intercomEndCardBtn.addEventListener('click', onIntercomEndClick);
   intercomSelectEl.addEventListener('change', refreshIntercomWidget);
 
   // -- incoming intercom (agent → this agent) ---------------------------
@@ -2276,11 +2482,13 @@ input  { font: inherit; }
     consultDurEl.textContent = '00:00';
     consultBannerEl.hidden = false;
     refreshTakeButtons();
+    refreshCallPanelIdle();
   }
   function hideConsultBanner() {
     incomingConsult = null;
     consultBannerEl.hidden = true;
     refreshTakeButtons();
+    refreshCallPanelIdle();
   }
   consultHangupBtn.addEventListener('click', () => {
     if (!incomingConsult) return;

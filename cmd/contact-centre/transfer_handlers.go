@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	voiceblender "github.com/VoiceBlender/voiceblender-go"
@@ -34,28 +35,47 @@ func (a *app) fanOutTransferTarget(t *transfer, msg any) {
 	}
 }
 
+// fanOutToOriginator routes msg to whoever STARTED the transfer. A
+// FromAgentID prefixed with "supervisor:" is a supervisor-initiated
+// transfer — fan out to every session of that username; anything else
+// is an agent id.
+func (a *app) fanOutToOriginator(fromID string, msg any) {
+	if username, ok := strings.CutPrefix(fromID, "supervisor:"); ok {
+		a.fanOutToSupervisors(username, msg)
+		return
+	}
+	a.fanOutToAgentByID(fromID, msg)
+}
+
 // ----------- agent (caller) handlers -----------------------------------
 
-// handleAgentTransferStart kicks off a blind or attended transfer.
-// Caller must be on an in_call customer call and have an active WebRTC
-// leg. Target must be online and idle. Customer is put on hold (or
-// kept on hold if already there) and the target's incoming-modal is
-// pushed. For attended transfers the target's `transfer.incoming`
-// notification carries `attended: true` so their UI knows to show a
-// "consulting" pill on Answer rather than the existing "transferred
-// call" UI.
+// handleAgentTransferStart kicks off a blind or attended transfer
+// initiated by an agent who's currently on a customer call.
 func (a *app) handleAgentTransferStart(ctx context.Context, ag *agent, kind, target string, attended bool, outbox chan<- any, log *slog.Logger) {
+	call := a.reg.callAnsweredBy(ag.ID)
+	if call == nil {
+		sendOrDrop(outbox, errorMsg("transfer.error", "not on a call"))
+		return
+	}
+	a.startTransfer(ctx, call, ag.ID, ag.Name, call.AnsweredAgentLeg, kind, target, attended, outbox, log)
+}
+
+// startTransfer is the shared transfer-start core. Caller must already
+// have looked up the call view and the originator's WebRTC leg. The
+// originator is identified by (fromID, fromName) — agent.ID for an
+// agent or "supervisor:<username>" for a supervisor. Customer is put
+// on hold (or kept on hold if already there), the target's incoming-
+// modal is pushed, and the originator is acked with the ringing state.
+// For attended transfers the target's `transfer.incoming` notification
+// carries `attended: true` so their UI shows a "consulting" pill on
+// Answer rather than the regular transferred-call UI.
+func (a *app) startTransfer(ctx context.Context, call *callView, fromID, fromName, fromLegID, kind, target string, attended bool, outbox chan<- any, log *slog.Logger) {
 	if target == "" {
 		sendOrDrop(outbox, errorMsg("transfer.error", "target required"))
 		return
 	}
 	if kind == "" {
 		kind = intercomTargetSupervisor
-	}
-	call := a.reg.callAnsweredBy(ag.ID)
-	if call == nil {
-		sendOrDrop(outbox, errorMsg("transfer.error", "not on a call"))
-		return
 	}
 	if a.transfers.ByCall(call.LegID) != nil {
 		sendOrDrop(outbox, errorMsg("transfer.error", "transfer already in flight"))
@@ -66,13 +86,18 @@ func (a *app) handleAgentTransferStart(ctx context.Context, ag *agent, kind, tar
 	var targetName string
 	switch kind {
 	case intercomTargetSupervisor:
+		// Self-check: a supervisor can't transfer back to themselves.
+		if fromUser, ok := strings.CutPrefix(fromID, "supervisor:"); ok && fromUser == target {
+			sendOrDrop(outbox, errorMsg("transfer.error", "cannot transfer to yourself"))
+			return
+		}
 		if len(a.supervisors.Sessions(target)) == 0 {
 			sendOrDrop(outbox, errorMsg("transfer.error", "supervisor not available"))
 			return
 		}
 		targetName = target
 	case intercomTargetAgent:
-		if target == ag.ID {
+		if target == fromID {
 			sendOrDrop(outbox, errorMsg("transfer.error", "cannot transfer to yourself"))
 			return
 		}
@@ -105,14 +130,14 @@ func (a *app) handleAgentTransferStart(ctx context.Context, ag *agent, kind, tar
 		return
 	}
 
-	t, err := a.transfers.Create(call.LegID, call.RoomID, ag, kind, target, targetName, call.AnsweredAgentLeg, attended)
+	t, err := a.transfers.Create(call.LegID, call.RoomID, fromID, fromName, kind, target, targetName, fromLegID, attended)
 	if err != nil {
 		sendOrDrop(outbox, errorMsg("transfer.error", err.Error()))
 		return
 	}
 
 	// Put the customer on hold (or accept that they already are).
-	if _, err := a.holdCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
+	if _, err := a.holdCaller(ctx, call, fromLegID, log); err != nil {
 		log.Warn("transfer: hold failed", "error", err)
 		a.transfers.Cancel(t.ID)
 		a.transfers.Settle(t.ID)
@@ -120,7 +145,7 @@ func (a *app) handleAgentTransferStart(ctx context.Context, ag *agent, kind, tar
 		return
 	}
 
-	log.Info("transfer: ringing", "transfer_id", t.ID, "kind", kind, "target", target)
+	log.Info("transfer: ringing", "transfer_id", t.ID, "kind", kind, "target", target, "from", fromID)
 
 	// Push the incoming-call notification.
 	a.fanOutTransferTarget(t, map[string]any{
@@ -132,7 +157,7 @@ func (a *app) handleAgentTransferStart(ctx context.Context, ag *agent, kind, tar
 		"attended":      t.Attended,
 		"started_at":    t.StartedAt,
 	})
-	// Ack the original agent with the ringing state.
+	// Ack the originator with the ringing state.
 	sendOrDrop(outbox, map[string]any{
 		"type":        "transfer.state",
 		"transfer_id": t.ID,
@@ -168,10 +193,16 @@ func (a *app) watchTransferTimeout(transferID string, d time.Duration) {
 }
 
 // handleAgentTransferCancel is the original agent calling off the
-// transfer before any target answers.
-func (a *app) handleAgentTransferCancel(_ context.Context, ag *agent, transferID string, log *slog.Logger) {
+// transfer before any target answers (or aborting an attended consult).
+func (a *app) handleAgentTransferCancel(ctx context.Context, ag *agent, transferID string, log *slog.Logger) {
+	a.cancelOwnTransfer(ctx, ag.ID, transferID, log)
+}
+
+// cancelOwnTransfer is the shared cancel core — fromID is the agent's
+// id or "supervisor:<username>" depending on who started the transfer.
+func (a *app) cancelOwnTransfer(_ context.Context, fromID, transferID string, log *slog.Logger) {
 	if transferID == "" {
-		if t := a.transfers.ByFromAgent(ag.ID); t != nil {
+		if t := a.transfers.ByFromAgent(fromID); t != nil {
 			transferID = t.ID
 		}
 	}
@@ -179,14 +210,14 @@ func (a *app) handleAgentTransferCancel(_ context.Context, ag *agent, transferID
 		return
 	}
 	t := a.transfers.Get(transferID)
-	if t == nil || t.FromAgentID != ag.ID {
+	if t == nil || t.FromAgentID != fromID {
 		return
 	}
 	cancelled, ok := a.transfers.Cancel(transferID)
 	if !ok {
 		return
 	}
-	log.Info("transfer: cancelled by agent", "transfer_id", cancelled.ID)
+	log.Info("transfer: cancelled by originator", "transfer_id", cancelled.ID, "from", fromID)
 	a.afterTransferFailed(cancelled, transferReasonCancelled)
 }
 
@@ -253,7 +284,7 @@ func (a *app) answerTransfer(ctx context.Context, t *transfer, newAgentID, newAg
 		"target_name":  claimed.TargetName,
 		"caller_from":  maskCaller(call.From, a.supervisorMask),
 	}
-	a.fanOutToAgentByID(claimed.FromAgentID, consultingMsg)
+	a.fanOutToOriginator(claimed.FromAgentID, consultingMsg)
 	a.fanOutTransferTarget(claimed, consultingMsg)
 	a.reg.NotifyChanged()
 	return claimed, true
@@ -316,6 +347,35 @@ func (a *app) finalizeTransfer(ctx context.Context, t *transfer, newAgentID, new
 		return false
 	}
 
+	// Supervisor target only: hook the session up to the customer call
+	// BEFORE reg.transferTo (which broadcasts a fresh snapshot). If we
+	// did this after, the snapshot would briefly lack `self.transferred_call`
+	// and the supervisor's "on call" pill (with the End button) would
+	// flicker off then back on, sometimes leaving them with no End button
+	// until the next snapshot.
+	if t.TargetKind == intercomTargetSupervisor {
+		for _, p := range a.supervisors.Sessions(t.Target) {
+			if legID, _ := p.Session.get(); legID == t.TargetLegID {
+				p.Session.setRoom(t.RoomID)
+				a.supervisorActiveCalls.Store(p.Session, t.CallLegID)
+				break
+			}
+		}
+	}
+	// Supervisor originator only: the supervisor's leg is no longer on
+	// the customer call (they're being handed off). Free their slot in
+	// supervisorActiveCalls and clear the session's room pointer so the
+	// "on call" panel disappears on the next snapshot.
+	if fromUsername, ok := strings.CutPrefix(t.FromAgentID, "supervisor:"); ok {
+		for _, p := range a.supervisors.Sessions(fromUsername) {
+			if legID, _ := p.Session.get(); legID == t.FromLegID {
+				p.Session.setRoom("")
+				a.supervisorActiveCalls.Delete(p.Session)
+				break
+			}
+		}
+	}
+
 	// Atomic registry update + signal the per-call goroutine. Must run
 	// BEFORE the consult-room teardown so the bridge loop's safety
 	// check ("AnsweredAgentLeg has been swapped") catches the eventual
@@ -344,7 +404,7 @@ func (a *app) finalizeTransfer(ctx context.Context, t *transfer, newAgentID, new
 		"from", t.FromName,
 		"to_kind", t.TargetKind, "to", t.Target, "to_name", t.TargetName)
 
-	a.fanOutToAgentByID(t.FromAgentID, map[string]any{
+	a.fanOutToOriginator(t.FromAgentID, map[string]any{
 		"type":        "transfer.completed",
 		"transfer_id": t.ID,
 	})
@@ -400,8 +460,14 @@ func (a *app) handleAgentTransferAnswer(ctx context.Context, ag *agent, transfer
 // "Complete transfer" action at the end of a consult — the customer
 // is moved to the target and this agent goes idle.
 func (a *app) handleAgentTransferComplete(ctx context.Context, ag *agent, transferID string, log *slog.Logger) {
+	a.completeOwnTransfer(ctx, ag.ID, transferID, log)
+}
+
+// completeOwnTransfer is the shared complete core for an attended
+// consult — fromID is "supervisor:<username>" for a supervisor.
+func (a *app) completeOwnTransfer(ctx context.Context, fromID, transferID string, log *slog.Logger) {
 	if transferID == "" {
-		if t := a.transfers.ByFromAgent(ag.ID); t != nil {
+		if t := a.transfers.ByFromAgent(fromID); t != nil {
 			transferID = t.ID
 		}
 	}
@@ -409,7 +475,7 @@ func (a *app) handleAgentTransferComplete(ctx context.Context, ag *agent, transf
 		return
 	}
 	t := a.transfers.Get(transferID)
-	if t == nil || t.FromAgentID != ag.ID || t.State != transferConsulting {
+	if t == nil || t.FromAgentID != fromID || t.State != transferConsulting {
 		return
 	}
 	a.completeAttendedTransfer(ctx, t.ID, log)
@@ -456,6 +522,36 @@ func (a *app) handleAgentTransferReject(_ context.Context, ag *agent, transferID
 	}
 	log.Info("transfer: rejected by agent", "transfer_id", failed.ID, "by", ag.ID)
 	a.afterTransferFailed(failed, transferReasonRejected)
+}
+
+// handleSupervisorTransferStart kicks off a blind or attended transfer
+// initiated by a supervisor who's currently on a customer call (the
+// call having been transferred TO them earlier by an agent).
+func (a *app) handleSupervisorTransferStart(ctx context.Context, sess *supervisorSession, presence *supervisorPresence, kind, target string, attended bool, outbox chan<- any, log *slog.Logger) {
+	fromID := "supervisor:" + presence.Username
+	call := a.reg.callAnsweredBy(fromID)
+	if call == nil {
+		sendOrDrop(outbox, errorMsg("transfer.error", "not on a call"))
+		return
+	}
+	legID, _ := sess.get()
+	if legID == "" || legID != call.AnsweredAgentLeg {
+		sendOrDrop(outbox, errorMsg("transfer.error", "audio not ready"))
+		return
+	}
+	a.startTransfer(ctx, call, fromID, presence.Username, legID, kind, target, attended, outbox, log)
+}
+
+// handleSupervisorTransferCancel is the supervisor calling off a
+// transfer they initiated (ringing or attended-consult phase).
+func (a *app) handleSupervisorTransferCancel(ctx context.Context, presence *supervisorPresence, transferID string, log *slog.Logger) {
+	a.cancelOwnTransfer(ctx, "supervisor:"+presence.Username, transferID, log)
+}
+
+// handleSupervisorTransferComplete is the supervisor's explicit
+// "Complete transfer" at the end of an attended consult.
+func (a *app) handleSupervisorTransferComplete(ctx context.Context, presence *supervisorPresence, transferID string, log *slog.Logger) {
+	a.completeOwnTransfer(ctx, "supervisor:"+presence.Username, transferID, log)
 }
 
 // handleSupervisorTransferAnswer is the supervisor's "Answer" action.
@@ -576,15 +672,20 @@ func (a *app) afterTransferFailed(t *transfer, reason string) {
 	}
 	call := a.reg.lookup(t.CallLegID)
 	if call != nil {
-		// Re-add the original agent's leg if it still exists.
-		originalLeg := a.agents.webRTCLeg(t.FromAgentID)
-		if originalLeg != "" {
-			_ = a.restoreCaller(context.Background(), call, originalLeg, a.log)
-		} else {
-			// Original agent's leg is gone — just stop the hold music
-			// (they may have disconnected). The call ends elsewhere.
-			_ = a.restoreCaller(context.Background(), call, "", a.log)
+		// Re-add the originator's leg if it still exists. For a
+		// supervisor originator we use the recorded FromLegID (which is
+		// the supervisor's WebRTC leg captured at Create time); for an
+		// agent we look it up by agent id so a fresh leg from a
+		// reconnect during the transfer is still picked up.
+		originalLeg := t.FromLegID
+		if _, ok := strings.CutPrefix(t.FromAgentID, "supervisor:"); !ok {
+			if cur := a.agents.webRTCLeg(t.FromAgentID); cur != "" {
+				originalLeg = cur
+			} else {
+				originalLeg = ""
+			}
 		}
+		_ = a.restoreCaller(context.Background(), call, originalLeg, a.log)
 	}
 	a.notifyOriginalAgentTransferEnded(t, reason)
 	a.fanOutTransferTarget(t, map[string]any{
@@ -596,12 +697,12 @@ func (a *app) afterTransferFailed(t *transfer, reason string) {
 }
 
 // notifyOriginalAgentTransferEnded pushes transfer.failed to the
-// agent who started the transfer.
+// agent (or supervisor) who started the transfer.
 func (a *app) notifyOriginalAgentTransferEnded(t *transfer, reason string) {
 	if t == nil {
 		return
 	}
-	a.fanOutToAgentByID(t.FromAgentID, map[string]any{
+	a.fanOutToOriginator(t.FromAgentID, map[string]any{
 		"type":        "transfer.failed",
 		"transfer_id": t.ID,
 		"reason":      reason,
@@ -683,12 +784,42 @@ func (a *app) cleanupTransfersOnAgentDisconnect(agentID string) {
 	}
 }
 
-// cleanupTransfersOnSupervisorDisconnect ends ringing transfers
-// targeted at a username with no remaining sessions; also hangs up
-// any customer call this session was actively holding via transfer.
+// cleanupTransfersOnSupervisorDisconnect handles WS disconnects for a
+// supervisor session involved in transfers in either direction.
+//
+//   - ORIGINATOR (this supervisor started a transfer):
+//     - ringing  → cancel (drops the target's modal). Their leg is
+//                  gone, so restoreCaller can't put them back; the
+//                  customer-hangup step below ends the call.
+//     - consulting → COMPLETE (same "transfer happens when the
+//                    first party disconnects" rule we use for agents).
+//
+//   - TARGET (this supervisor was being rung): fail the transfer and
+//     restore the customer to the originator — but only if no other
+//     tab of the same username is still up to answer.
+//
+// Finally, any active transferred customer call on this session is
+// hung up (only if it's still in supervisorActiveCalls — finalize will
+// have already cleared it for a consulting completion above).
 func (a *app) cleanupTransfersOnSupervisorDisconnect(p *supervisorPresence) {
 	if p == nil || p.Username == "" {
 		return
+	}
+	fromID := "supervisor:" + p.Username
+	if t := a.transfers.ByFromAgent(fromID); t != nil {
+		switch t.State {
+		case transferConsulting:
+			a.completeAttendedTransfer(context.Background(), t.ID, a.log)
+		case transferRinging:
+			if cancelled, ok := a.transfers.Cancel(t.ID); ok {
+				a.fanOutTransferTarget(cancelled, map[string]any{
+					"type":        "transfer.cleared",
+					"transfer_id": cancelled.ID,
+				})
+				a.transfers.Settle(cancelled.ID)
+				a.reg.NotifyChanged()
+			}
+		}
 	}
 	for _, t := range a.transfers.ByTarget(intercomTargetSupervisor, p.Username) {
 		if len(a.supervisors.Sessions(p.Username)) > 0 {

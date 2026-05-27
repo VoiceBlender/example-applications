@@ -831,7 +831,7 @@ func (a *app) handleCallsStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	if err := writeAgentMsg(ctx, c, a.supervisorSnapshot(sess)); err != nil {
+	if err := writeAgentMsg(ctx, c, a.supervisorSnapshot(sess, presence)); err != nil {
 		return
 	}
 
@@ -840,7 +840,7 @@ func (a *app) handleCallsStream(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-sub.trigger:
-			if err := writeAgentMsg(ctx, c, a.supervisorSnapshot(sess)); err != nil {
+			if err := writeAgentMsg(ctx, c, a.supervisorSnapshot(sess, presence)); err != nil {
 				return
 			}
 		case msg := <-outbox:
@@ -877,7 +877,7 @@ func (a *app) roomStillExists(roomID string, calls []callView) bool {
 // supervisorSnapshot builds the supervisor view: every active call, every
 // logged-in agent (with their current call denormalized in), and the
 // listening state of this particular supervisor session.
-func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
+func (a *app) supervisorSnapshot(sess *supervisorSession, presence *supervisorPresence) map[string]any {
 	snap := a.reg.snapshot()
 	agents := a.agents.list()
 	enriched := make([]map[string]any, len(agents))
@@ -943,15 +943,31 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 	metrics := computeMetrics(snap.Calls, logEntries, snap.At, a.metricsWindow, a.slaThreshold)
 	self := map[string]any{"listening_room_id": roomID}
 	// Surface an active transferred customer call (if any) so the
-	// supervisor's topbar pill repaints after a WS reconnect.
+	// supervisor's topbar pill repaints after a WS reconnect. Also
+	// reports whether the customer is on hold (the panel toggles its
+	// Hold/Resume button from that flag).
 	if v, ok := a.supervisorActiveCalls.Load(sess); ok {
 		if callLegID, _ := v.(string); callLegID != "" {
 			if c := a.reg.lookup(callLegID); c != nil {
 				self["transferred_call"] = map[string]any{
 					"call_leg_id": callLegID,
 					"caller_from": maskCaller(c.From, a.supervisorMask),
+					"on_hold":     c.OnHold,
 				}
 			}
+		}
+	}
+	// In-flight transfer this supervisor initiated — surfaces ringing /
+	// consulting state so reconnect rebuilds their picker / status UI.
+	if t := a.transfers.ByFromAgent("supervisor:" + presence.Username); t != nil {
+		self["transfer"] = map[string]any{
+			"transfer_id": t.ID,
+			"state":       t.State,
+			"target_kind": t.TargetKind,
+			"target":      t.Target,
+			"target_name": t.TargetName,
+			"attended":    t.Attended,
+			"started_at":  t.StartedAt,
 		}
 	}
 	// Surface this session's active attended-transfer consult (if any)
@@ -1000,15 +1016,17 @@ func (a *app) supervisorSnapshot(sess *supervisorSession) map[string]any {
 		}
 		a.intercoms.mu.Unlock()
 	}
+	self["username"] = presence.Username
 	return map[string]any{
-		"type":     "snapshot",
-		"calls":    calls,
-		"stats":    snap.Stats,
-		"at":       snap.At,
-		"agents":   enriched,
-		"call_log": logEntries,
-		"metrics":  metrics,
-		"self":     self,
+		"type":        "snapshot",
+		"calls":       calls,
+		"stats":       snap.Stats,
+		"at":          snap.At,
+		"agents":      enriched,
+		"supervisors": a.supervisors.UsernamesOnline(),
+		"call_log":    logEntries,
+		"metrics":     metrics,
+		"self":        self,
 	}
 }
 
@@ -1024,6 +1042,9 @@ func (a *app) readSupervisorMessages(ctx context.Context, cancel context.CancelF
 			RoomID     string                        `json:"room_id,omitempty"`
 			IntercomID string                        `json:"intercom_id,omitempty"`
 			TransferID string                        `json:"transfer_id,omitempty"`
+			TargetKind string                        `json:"target_kind,omitempty"`
+			Target     string                        `json:"target,omitempty"`
+			Attended   bool                          `json:"attended,omitempty"`
 		}
 		if err := wsjson.Read(ctx, c, &msg); err != nil {
 			return
@@ -1045,12 +1066,22 @@ func (a *app) readSupervisorMessages(ctx context.Context, cancel context.CancelF
 			a.handleSupervisorIntercomReject(ctx, presence, msg.IntercomID, log)
 		case "intercom.hangup":
 			a.handleSupervisorIntercomHangup(ctx, sess, msg.IntercomID, log)
+		case "transfer.start":
+			a.handleSupervisorTransferStart(ctx, sess, presence, msg.TargetKind, msg.Target, msg.Attended, outbox, log)
+		case "transfer.cancel":
+			a.handleSupervisorTransferCancel(ctx, presence, msg.TransferID, log)
+		case "transfer.complete":
+			a.handleSupervisorTransferComplete(ctx, presence, msg.TransferID, log)
 		case "transfer.answer":
 			a.handleSupervisorTransferAnswer(ctx, sess, presence, msg.TransferID, outbox, log)
 		case "transfer.reject":
 			a.handleSupervisorTransferReject(ctx, presence, msg.TransferID, log)
 		case "transfer.hangup":
 			a.handleSupervisorTransferEnd(ctx, sess, msg.TransferID, log)
+		case "call.hold":
+			a.handleSupervisorCallHold(ctx, sess, presence, outbox, log)
+		case "call.resume":
+			a.handleSupervisorCallResume(ctx, sess, presence, outbox, log)
 		default:
 			log.Debug("ignored supervisor ws message", "type", msg.Type)
 		}
@@ -1621,6 +1652,43 @@ func (a *app) handleAgentCallResume(ctx context.Context, ag *agent, outbox chan<
 	}
 	if err := a.restoreCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
 		log.Warn("resume failed", "error", err)
+		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "resume failed"})
+		return
+	}
+}
+
+// handleSupervisorCallHold / Resume mirror the agent versions for a
+// supervisor who's on a transferred customer call. Lookup is by the
+// supervisor's id ("supervisor:<username>") in the call registry.
+func (a *app) handleSupervisorCallHold(ctx context.Context, _ *supervisorSession, presence *supervisorPresence, outbox chan<- any, log *slog.Logger) {
+	fromID := "supervisor:" + presence.Username
+	call := a.reg.callAnsweredBy(fromID)
+	if call == nil {
+		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "not on a call"})
+		return
+	}
+	if call.OnHold {
+		return
+	}
+	if _, err := a.holdCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
+		log.Warn("supervisor hold failed", "error", err)
+		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "hold failed"})
+		return
+	}
+}
+
+func (a *app) handleSupervisorCallResume(ctx context.Context, _ *supervisorSession, presence *supervisorPresence, outbox chan<- any, log *slog.Logger) {
+	fromID := "supervisor:" + presence.Username
+	call := a.reg.callAnsweredBy(fromID)
+	if call == nil {
+		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "not on a call"})
+		return
+	}
+	if !call.OnHold {
+		return
+	}
+	if err := a.restoreCaller(ctx, call, call.AnsweredAgentLeg, log); err != nil {
+		log.Warn("supervisor resume failed", "error", err)
 		sendOrDrop(outbox, map[string]any{"type": "call.error", "message": "resume failed"})
 		return
 	}

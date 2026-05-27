@@ -54,10 +54,13 @@ func newTransferRegistry() *transferRegistry {
 	}
 }
 
-// Create registers a new ringing transfer. Errors if the call already
-// has a transfer in flight or required fields are missing.
-func (r *transferRegistry) Create(callLegID, roomID string, ag *agent, kind, target, targetName, fromLegID string, attended bool) (*transfer, error) {
-	if callLegID == "" || roomID == "" || ag == nil || target == "" {
+// Create registers a new ringing transfer. `fromID` is the originator's
+// identity — for an agent this is the agent.ID; for a supervisor it's
+// "supervisor:<username>". `fromName` is the display name shown to the
+// target. Errors if the call already has a transfer in flight or
+// required fields are missing.
+func (r *transferRegistry) Create(callLegID, roomID, fromID, fromName, kind, target, targetName, fromLegID string, attended bool) (*transfer, error) {
+	if callLegID == "" || roomID == "" || fromID == "" || target == "" {
 		return nil, errors.New("missing fields")
 	}
 	if kind != intercomTargetSupervisor && kind != intercomTargetAgent {
@@ -71,8 +74,8 @@ func (r *transferRegistry) Create(callLegID, roomID string, ag *agent, kind, tar
 		ID:          id,
 		CallLegID:   callLegID,
 		RoomID:      roomID,
-		FromAgentID: ag.ID,
-		FromName:    ag.Name,
+		FromAgentID: fromID,
+		FromName:    fromName,
 		FromLegID:   fromLegID,
 		TargetKind:  kind,
 		Target:      target,

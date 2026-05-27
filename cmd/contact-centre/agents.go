@@ -20,10 +20,13 @@ type agent struct {
 
 // agentRemoveGrace is how long an agent stays in the registry after
 // their WebSocket disconnects before being auto-removed. The grace
-// absorbs brief flaps (page reload, transient network hiccup) without
-// churning the supervisor's roster; a truly-gone agent (closed tab,
-// killed laptop) disappears after the grace expires.
-const agentRemoveGrace = 15 * time.Second
+// absorbs flaps (page reload, mobile-network roaming, suspend/resume)
+// without churning the supervisor's roster; a truly-gone agent (closed
+// tab, killed laptop) disappears after the grace expires. The agent
+// panel also has a client-side recovery path: if the WS rejects an
+// already-stale agent id, the client re-registers from the cookie
+// session so a long outage doesn't strand them on a dead id.
+const agentRemoveGrace = 60 * time.Second
 
 type agentRegistry struct {
 	mu            sync.Mutex
