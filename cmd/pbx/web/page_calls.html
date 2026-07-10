@@ -1,0 +1,43 @@
+{{define "body"}}
+<section class="board">
+  <div class="board-head">
+    <div class="board-title green">Live calls</div>
+    <div class="board-meta" data-ref="calls-count">0 active</div>
+  </div>
+  <div class="grid-head call-cols">
+    <div>Call</div><div class="hide-sm">Type</div><div>State</div><div>Duration</div>
+  </div>
+  <div data-ref="call-rows"></div>
+  <div class="empty" data-ref="call-empty">No active calls</div>
+</section>
+{{end}}
+
+{{define "pagescript"}}
+<script>
+(() => {
+  const { $, el, callStateChip, fmtDur } = PBX;
+  let lastCalls = [];
+  function renderCalls(calls) {
+    lastCalls = calls || [];
+    const cr = $('call-rows'); cr.textContent = '';
+    $('call-empty').hidden = lastCalls.length > 0;
+    $('calls-count').textContent = lastCalls.length + ' active';
+    lastCalls.forEach(c => {
+      const row = el('div', 'row call-cols');
+      const peer = el('div', 'call-peer');
+      peer.appendChild(document.createTextNode(c.from || '?'));
+      peer.appendChild(el('span', 'call-arrow', '→'));
+      peer.appendChild(document.createTextNode(c.to || '?'));
+      if (c.via) { peer.appendChild(el('span', 'call-via', ' · via ' + c.via)); }
+      row.appendChild(peer);
+      row.appendChild(el('div', 'call-kind hide-sm', c.kind || ''));
+      const s = el('div'); s.appendChild(callStateChip(c)); row.appendChild(s);
+      row.appendChild(el('div', 'call-dur', fmtDur(c.since)));
+      cr.appendChild(row);
+    });
+  }
+  PBX.onSnapshot(snap => renderCalls(snap.calls));
+  PBX.onTick(() => { if (lastCalls.length) renderCalls(lastCalls); });
+})();
+</script>
+{{end}}

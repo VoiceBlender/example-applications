@@ -1,0 +1,58 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <rect x="0" y="5" width="2" height="4" fill="var(--amber)"/>
+          <rect x="4" y="2" width="2" height="10" fill="var(--amber)"/>
+          <rect x="8" y="0" width="2" height="14" fill="var(--amber)"/>
+          <rect x="12" y="4" width="2" height="6" fill="var(--amber)"/>
+        </svg>
+      </div>
+      <div>
+        <div class="brand-name">VoiceBlender PBX</div>
+        <div class="brand-sub">management console</div>
+      </div>
+    </div>
+    <div class="status">
+      <span class="stream" data-ref="stream" data-state="connecting"><span class="stream-dot"></span><span data-ref="stream-label">Connecting</span></span>
+      <a class="signout" href="/logout">Sign out</a>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a href="/">Live calls</a>
+    <a href="/extensions">Extensions</a>
+    <a href="/trunks">Trunks</a>
+    <a href="/dialplan">Dial plan</a>
+    <a href="/config">Config</a>
+  </nav>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Extensions registered</div><div class="stat-value" data-ref="stat-ext">0 / 0</div></div>
+    <div class="stat"><div class="stat-label">Trunks up</div><div class="stat-value" data-ref="stat-trunks">0 / 0</div></div>
+    <div class="stat"><div class="stat-label">Active calls</div><div class="stat-value" data-ref="stat-calls">0</div></div>
+  </div>
+
+  {{block "body" .}}{{end}}
+
+  <div class="footline">VoiceBlender · pbx example</div>
+</div>
+
+{{block "modals" .}}{{end}}
+<script src="/static/app.js"></script>
+{{block "pagescript" .}}{{end}}
+</body>
+</html>{{end}}

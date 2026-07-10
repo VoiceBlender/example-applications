@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Superadmin · PBX</title>
+<style>
+:root{
+  --bg:#0a0d12; --bg-2:#131820; --bg-3:#1b2230; --border:#262d3c; --border-bright:#3a4358;
+  --fg:#e6ebf3; --fg-dim:#8a93a3; --fg-mute:#565d6e;
+  --amber:#ffa940; --amber-dim:#b97920; --cyan:#5ec8e8; --cyan-dim:#34708a; --green:#5ee2a4; --green-dim:#2e7d54; --red:#ff5d6c;
+  --font-sans:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0; min-height:100vh;}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-sans); font-size:14px;}
+.page{max-width:1200px; margin:0 auto; padding:24px 32px 56px;}
+.topbar{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border:1px solid var(--border); background:linear-gradient(180deg,var(--bg-2),var(--bg)); margin-bottom:22px;}
+.brand{font-size:13px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase;}
+.brand span{display:block; font-family:var(--font-mono); font-size:11px; color:var(--red); letter-spacing:0.14em; margin-top:2px;}
+.signout{font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:var(--fg-dim); text-decoration:none; border:1px solid var(--border-bright); padding:7px 12px;}
+.signout:hover{border-color:var(--red); color:var(--red);}
+.board{border:1px solid var(--border); background:var(--bg-2); margin-bottom:22px;}
+.board-head{display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid var(--border); background:var(--bg);}
+.board-title{font-family:var(--font-mono); font-size:11px; letter-spacing:0.22em; text-transform:uppercase;}
+.add-btn{font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em; text-transform:uppercase; background:transparent; border:1px solid var(--amber); color:var(--amber); padding:7px 12px; cursor:pointer;}
+.add-btn:hover{background:var(--amber); color:var(--bg);}
+.grid-head,.row{display:grid; column-gap:14px; align-items:center;}
+.ext-cols{grid-template-columns:130px 70px 1fr 1fr 110px 120px;}
+.trunk-cols{grid-template-columns:130px 1fr 80px 1.3fr 110px 120px;}
+.tenant-cols{grid-template-columns:220px 1fr 180px;}
+.t-name{font-family:var(--font-mono);} .t-id{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute);}
+.chips{display:flex; flex-wrap:wrap; gap:6px;}
+.chip{display:inline-flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11px; color:var(--fg-dim); border:1px solid var(--border-bright); padding:3px 8px;}
+.chip button{background:transparent; border:0; color:var(--fg-mute); cursor:pointer; font-size:12px; line-height:1; padding:0;}
+.chip button:hover{color:var(--red);}
+.chip-none{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute);}
+.dp-cols{grid-template-columns:220px 1fr 140px;}
+.dp-ta{width:100%; height:min(52vh,420px); resize:vertical; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg); font-family:var(--font-mono); font-size:12px; line-height:1.5; padding:12px; outline:none;}
+.dp-ta:focus{border-color:var(--amber);}
+.modal.wide{width:min(760px,96vw);}
+.hint{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); margin:0 0 10px;}
+.grid-head{padding:10px 20px; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute); background:linear-gradient(180deg,var(--bg-2),var(--bg-3));}
+.row{padding:12px 20px; border-bottom:1px solid var(--border);}
+.row:last-child{border-bottom:none;} .row:hover{background:rgba(255,255,255,0.015);}
+.row>div{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.mono{font-family:var(--font-mono);}
+.tenant-tag{display:inline-block; font-family:var(--font-mono); font-size:11px; color:var(--cyan); border:1px solid var(--cyan-dim); padding:2px 8px;}
+.state{display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border:1px solid var(--border-bright); background:var(--bg); font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase;}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--fg-mute);}
+.state.ok{border-color:var(--green-dim); color:var(--green);} .state.ok .dot{background:var(--green); box-shadow:0 0 6px var(--green);}
+.state.bad{border-color:var(--red); color:var(--red);} .state.bad .dot{background:var(--red);}
+.state.warn{border-color:var(--amber-dim); color:var(--amber);} .state.warn .dot{background:var(--amber);}
+.actions{display:flex; gap:8px; justify-content:flex-end;}
+.btn{font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase; background:transparent; border:1px solid var(--border-bright); color:var(--fg-dim); padding:6px 10px; cursor:pointer;}
+.btn:hover{border-color:var(--amber); color:var(--amber);} .btn.danger:hover{border-color:var(--red); color:var(--red);}
+.empty{padding:22px; text-align:center; color:var(--fg-mute); font-family:var(--font-mono); font-size:11px; letter-spacing:0.12em; text-transform:uppercase;}
+.backdrop{position:fixed; inset:0; z-index:100; display:grid; place-items:center; background:rgba(8,10,14,0.74);}
+.backdrop[hidden]{display:none;}
+.modal{width:min(520px,94vw); max-height:92vh; overflow:auto; border:1px solid var(--border-bright); background:var(--bg-2);}
+.modal-head{display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid var(--border);}
+.modal-title{font-family:var(--font-mono); font-size:11px; letter-spacing:0.2em; text-transform:uppercase;}
+.close{background:transparent; border:1px solid var(--border-bright); color:var(--fg-dim); width:26px; height:26px; cursor:pointer;}
+.close:hover{border-color:var(--red); color:var(--red);}
+.modal-body{padding:20px;}
+.field{margin-bottom:13px;} .field.hidden{display:none;}
+label{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
+input,select{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg); padding:10px 12px; font-family:var(--font-mono); font-size:14px; outline:none;}
+input:focus,select:focus{border-color:var(--amber);}
+.foot{display:flex; justify-content:flex-end; margin-top:6px;}
+.primary{font-family:var(--font-mono); font-size:11px; letter-spacing:0.18em; text-transform:uppercase; background:transparent; border:1px solid var(--amber); color:var(--amber); padding:10px 16px; cursor:pointer;}
+.primary:hover{background:var(--amber); color:var(--bg);}
+.err{color:var(--red); font-family:var(--font-mono); font-size:11px; min-height:15px; margin-top:4px;}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="topbar">
+    <div class="brand">VoiceBlender PBX<span>superadmin · all tenants</span></div>
+    <a class="signout" href="/logout">Sign out</a>
+  </div>
+
+  <section class="board">
+    <div class="board-head">
+      <div class="board-title">Tenants</div>
+      <button class="add-btn" id="add-tenant">+ Add tenant</button>
+    </div>
+    <div class="grid-head tenant-cols"><div>Tenant</div><div>Console users</div><div></div></div>
+    <div id="tenant-rows"></div>
+    <div class="empty" id="tenant-empty" hidden>No tenants — add one to get started</div>
+  </section>
+
+  <section class="board">
+    <div class="board-head">
+      <div class="board-title">Extensions · all tenants</div>
+      <button class="add-btn" id="add-ext">+ Add extension</button>
+    </div>
+    <div class="grid-head ext-cols"><div>Tenant</div><div>Ext</div><div>Name</div><div>SIP username</div><div>Status</div><div></div></div>
+    <div id="ext-rows"></div>
+    <div class="empty" id="ext-empty" hidden>No extensions</div>
+  </section>
+
+  <section class="board">
+    <div class="board-head">
+      <div class="board-title">Trunks · all tenants</div>
+      <button class="add-btn" id="add-trunk">+ Add trunk</button>
+    </div>
+    <div class="grid-head trunk-cols"><div>Tenant</div><div>Name</div><div>Type</div><div>Registrar / Peer</div><div>Status</div><div></div></div>
+    <div id="trunk-rows"></div>
+    <div class="empty" id="trunk-empty" hidden>No trunks</div>
+  </section>
+
+  <section class="board">
+    <div class="board-head"><div class="board-title">Dial plans · per tenant</div></div>
+    <div class="grid-head dp-cols"><div>Tenant</div><div></div><div></div></div>
+    <div id="dp-rows"></div>
+    <div class="empty" id="dp-empty" hidden>No tenants</div>
+  </section>
+</div>
+
+<div class="backdrop" id="dp-modal" hidden><div class="modal wide">
+  <div class="modal-head"><div class="modal-title" id="dp-title">Dial plan</div><button class="close" id="dp-close">✕</button></div>
+  <div class="modal-body">
+    <p class="hint">Raw dial-plan graph (JSON). Tenant admins edit this visually on their own Dial plan page; here you can inspect and edit any tenant's graph directly.</p>
+    <textarea class="dp-ta" id="dp-ta" spellcheck="false"></textarea>
+    <div class="err" id="dp-err"></div>
+    <div class="foot"><button class="primary" id="dp-save">Save</button></div>
+  </div>
+</div></div>
+
+<div class="backdrop" id="tenant-modal" hidden><div class="modal">
+  <div class="modal-head"><div class="modal-title">Add tenant</div><button class="close" id="tenant-close">✕</button></div>
+  <div class="modal-body">
+    <div class="field"><label>Company / workspace name</label><input id="t-name" placeholder="Acme Corp"></div>
+    <div class="field"><label>Admin username</label><input id="t-user" placeholder="admin"></div>
+    <div class="field"><label>Admin password</label><input id="t-pass" type="password"></div>
+    <div class="err" id="t-err"></div>
+    <div class="foot"><button class="primary" id="t-save">Create</button></div>
+  </div>
+</div></div>
+
+<div class="backdrop" id="user-modal" hidden><div class="modal">
+  <div class="modal-head"><div class="modal-title" id="user-title">Add user</div><button class="close" id="user-close">✕</button></div>
+  <div class="modal-body">
+    <input type="hidden" id="u-tenant">
+    <div class="field"><label>Username</label><input id="u-name" placeholder="operator"></div>
+    <div class="field"><label>Password</label><input id="u-pass" type="password"></div>
+    <div class="err" id="u-err"></div>
+    <div class="foot"><button class="primary" id="u-save">Add user</button></div>
+  </div>
+</div></div>
+
+<div class="backdrop" id="ext-modal" hidden><div class="modal">
+  <div class="modal-head"><div class="modal-title" id="ext-title">Add extension</div><button class="close" id="ext-close">✕</button></div>
+  <div class="modal-body">
+    <input type="hidden" id="ext-id">
+    <div class="field"><label>Tenant</label><select id="ext-tenant"></select></div>
+    <div class="field"><label>Extension number</label><input id="ext-number" placeholder="1001"></div>
+    <div class="field"><label>Display name</label><input id="ext-name" placeholder="Alice"></div>
+    <div class="field"><label>SIP username — blank = auto &lt;tenant&gt;-&lt;number&gt;</label><input id="ext-username" placeholder="auto"></div>
+    <div class="field"><label>Password (blank = unchanged on edit)</label><input id="ext-password" type="password"></div>
+    <div class="field"><label>Codecs — comma-separated (blank = default)</label><input id="ext-codecs" placeholder="opus, PCMA, PCMU"></div>
+    <div class="field"><label>Registration expiry (seconds, blank = 60)</label><input id="ext-regexp" type="number"></div>
+    <div class="err" id="ext-err"></div>
+    <div class="foot"><button class="primary" id="ext-save">Save</button></div>
+  </div>
+</div></div>
+
+<div class="backdrop" id="trunk-modal" hidden><div class="modal">
+  <div class="modal-head"><div class="modal-title" id="trunk-title">Add trunk</div><button class="close" id="trunk-close">✕</button></div>
+  <div class="modal-body">
+    <input type="hidden" id="trunk-id">
+    <div class="field"><label>Tenant</label><select id="trunk-tenant"></select></div>
+    <div class="field"><label>Name</label><input id="trunk-name" placeholder="Provider A"></div>
+    <div class="field"><label>Type</label><select id="trunk-type"><option value="register">Register</option><option value="ip">IP (source-IP auth)</option></select></div>
+    <div class="field reg"><label>Registrar URI</label><input id="trunk-registrar" placeholder="sip:sip.provider.com"></div>
+    <div class="field reg"><label>AOR</label><input id="trunk-aor" placeholder="sip:12345@sip.provider.com"></div>
+    <div class="field reg"><label>Username</label><input id="trunk-username" placeholder="12345"></div>
+    <div class="field reg"><label>Password</label><input id="trunk-password" type="password"></div>
+    <div class="field reg"><label>Expires (seconds)</label><input id="trunk-expires" type="number" placeholder="3600"></div>
+    <div class="field ip"><label>Peer URI</label><input id="trunk-peer" placeholder="sip:203.0.113.5"></div>
+    <div class="field ip"><label>Peer IPs (comma-separated)</label><input id="trunk-peerips" placeholder="203.0.113.5"></div>
+    <div class="err" id="trunk-err"></div>
+    <div class="foot"><button class="primary" id="trunk-save">Save</button></div>
+  </div>
+</div></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+  let tenants = [], users = [], exts = [], trunks = [];
+
+  async function load() {
+    const r = await fetch('/api/admin/data');
+    if (!r.ok) { if (r.status === 403 || r.status === 401) location.href = '/login'; return; }
+    const d = await r.json();
+    tenants = d.tenants || []; users = d.users || []; exts = d.extensions || []; trunks = d.trunks || [];
+    render();
+  }
+  function fillTenants(sel, val) { sel.innerHTML = ''; tenants.forEach(t => { const o = el('option', null, (t.name || t.id) + ' (' + t.id + ')'); o.value = t.id; sel.appendChild(o); }); if (val) sel.value = val; }
+
+  function render() {
+    const tr0 = $('tenant-rows'); tr0.textContent = ''; $('tenant-empty').hidden = tenants.length > 0;
+    tenants.forEach(t => {
+      const row = el('div', 'row tenant-cols');
+      const c1 = el('div'); c1.appendChild(el('div', 't-name', t.name || t.id)); c1.appendChild(el('div', 't-id', t.id)); row.appendChild(c1);
+      const c2 = el('div', 'chips');
+      const us = users.filter(u => u.tenant_id === t.id);
+      if (!us.length) c2.appendChild(el('span', 'chip-none', 'no users'));
+      us.forEach(u => { const chip = el('span', 'chip'); chip.appendChild(document.createTextNode(u.username)); const x = el('button', null, '✕'); x.title = 'Remove user'; x.onclick = () => delUser(u); chip.appendChild(x); c2.appendChild(chip); });
+      row.appendChild(c2);
+      const a = el('div', 'actions'); const au = el('button', 'btn', '+ User'); au.onclick = () => openUser(t); const dl = el('button', 'btn danger', 'Delete'); dl.onclick = () => delTenant(t); a.append(au, dl); row.appendChild(a);
+      tr0.appendChild(row);
+    });
+
+    const dr = $('dp-rows'); dr.textContent = ''; $('dp-empty').hidden = tenants.length > 0;
+    tenants.forEach(t => {
+      const row = el('div', 'row dp-cols');
+      const c1 = el('div'); c1.appendChild(el('span', 'tenant-tag', t.id)); row.appendChild(c1);
+      row.appendChild(el('div', 't-name', t.name || t.id));
+      const a = el('div', 'actions'); const ed = el('button', 'btn', 'Edit dial plan'); ed.onclick = () => openDp(t); a.appendChild(ed); row.appendChild(a);
+      dr.appendChild(row);
+    });
+
+    const er = $('ext-rows'); er.textContent = ''; $('ext-empty').hidden = exts.length > 0;
+    exts.forEach(e => {
+      const row = el('div', 'row ext-cols');
+      const td = el('div'); td.appendChild(el('span', 'tenant-tag', e.tenant_id)); row.appendChild(td);
+      row.appendChild(el('div', 'mono', e.number));
+      row.appendChild(el('div', null, e.name || '—'));
+      row.appendChild(el('div', 'mono', e.username || '—'));
+      const s = el('div'); const chip = el('span', 'state ' + (e.registered ? 'ok' : 'bad')); chip.appendChild(el('span', 'dot')); chip.appendChild(document.createTextNode(e.registered ? 'Registered' : 'Offline')); s.appendChild(chip); row.appendChild(s);
+      const a = el('div', 'actions'); const ed = el('button', 'btn', 'Edit'); ed.onclick = () => openExt(e); const dl = el('button', 'btn danger', 'Delete'); dl.onclick = () => delExt(e); a.append(ed, dl); row.appendChild(a);
+      er.appendChild(row);
+    });
+    const tr = $('trunk-rows'); tr.textContent = ''; $('trunk-empty').hidden = trunks.length > 0;
+    trunks.forEach(t => {
+      const row = el('div', 'row trunk-cols');
+      const td = el('div'); td.appendChild(el('span', 'tenant-tag', t.tenant_id)); row.appendChild(td);
+      row.appendChild(el('div', null, t.name || '—'));
+      row.appendChild(el('div', 'mono', t.type));
+      row.appendChild(el('div', 'mono', t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—')));
+      let cls = 'warn'; if (t.state === 'registered' || t.state === 'active') cls = 'ok'; else if (t.state === 'failed' || t.state === 'expired') cls = 'bad';
+      const s = el('div'); const chip = el('span', 'state ' + cls); chip.appendChild(el('span', 'dot')); chip.appendChild(document.createTextNode(t.state || 'pending')); if (t.last_error) chip.title = t.last_error; s.appendChild(chip); row.appendChild(s);
+      const a = el('div', 'actions'); const ed = el('button', 'btn', 'Edit'); ed.onclick = () => openTrunk(t); const dl = el('button', 'btn danger', 'Delete'); dl.onclick = () => delTrunk(t); a.append(ed, dl); row.appendChild(a);
+      tr.appendChild(row);
+    });
+  }
+
+  function openExt(e) {
+    $('ext-title').textContent = e ? 'Edit extension' : 'Add extension';
+    $('ext-id').value = e ? e.id : '';
+    fillTenants($('ext-tenant'), e ? e.tenant_id : '');
+    $('ext-number').value = e ? e.number : '';
+    $('ext-name').value = e ? (e.name || '') : '';
+    $('ext-username').value = e ? (e.username || '') : '';
+    $('ext-password').value = '';
+    $('ext-codecs').value = e && e.codecs ? e.codecs.join(', ') : '';
+    $('ext-regexp').value = e && e.reg_expiry ? e.reg_expiry : '';
+    $('ext-err').textContent = '';
+    $('ext-modal').hidden = false; $('ext-number').focus();
+  }
+  async function saveExt() {
+    const id = $('ext-id').value;
+    const body = { tenant_id: $('ext-tenant').value, number: $('ext-number').value.trim(), name: $('ext-name').value.trim(),
+      username: $('ext-username').value.trim(), password: $('ext-password').value,
+      codecs: $('ext-codecs').value.split(',').map(s => s.trim()).filter(Boolean) };
+    const rex = parseInt($('ext-regexp').value, 10); if (!isNaN(rex) && rex > 0) body.reg_expiry = rex;
+    if (!body.number) { $('ext-err').textContent = 'Number is required.'; return; }
+    const r = await fetch('/api/admin/extensions' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('ext-err').textContent = 'Save failed (' + r.status + ').'; return; }
+    $('ext-modal').hidden = true; load();
+  }
+  async function delExt(e) { if (!confirm('Delete extension ' + e.number + ' (' + e.tenant_id + ')?')) return; await fetch('/api/admin/extensions/' + encodeURIComponent(e.id), { method: 'DELETE' }); load(); }
+
+  function applyType() { const t = $('trunk-type').value; document.querySelectorAll('.reg').forEach(f => f.classList.toggle('hidden', t !== 'register')); document.querySelectorAll('.ip').forEach(f => f.classList.toggle('hidden', t !== 'ip')); }
+  function openTrunk(t) {
+    $('trunk-title').textContent = t ? 'Edit trunk' : 'Add trunk';
+    $('trunk-id').value = t ? t.id : '';
+    fillTenants($('trunk-tenant'), t ? t.tenant_id : '');
+    $('trunk-name').value = t ? (t.name || '') : '';
+    $('trunk-type').value = t ? (t.type || 'register') : 'register';
+    $('trunk-registrar').value = t ? (t.registrar_uri || '') : '';
+    $('trunk-aor').value = t ? (t.aor || '') : '';
+    $('trunk-username').value = t ? (t.username || '') : '';
+    $('trunk-password').value = '';
+    $('trunk-expires').value = t && t.expires ? t.expires : '';
+    $('trunk-peer').value = t ? (t.peer_uri || '') : '';
+    $('trunk-peerips').value = t && t.peer_ips ? t.peer_ips.join(', ') : '';
+    $('trunk-err').textContent = '';
+    applyType(); $('trunk-modal').hidden = false; $('trunk-name').focus();
+  }
+  async function saveTrunk() {
+    const id = $('trunk-id').value; const type = $('trunk-type').value;
+    const body = { tenant_id: $('trunk-tenant').value, name: $('trunk-name').value.trim(), type };
+    if (!body.name) { $('trunk-err').textContent = 'Name is required.'; return; }
+    if (type === 'register') { body.registrar_uri = $('trunk-registrar').value.trim(); body.aor = $('trunk-aor').value.trim(); body.username = $('trunk-username').value.trim(); body.password = $('trunk-password').value; const ex = parseInt($('trunk-expires').value, 10); if (!isNaN(ex)) body.expires = ex; }
+    else { body.peer_uri = $('trunk-peer').value.trim(); body.peer_ips = $('trunk-peerips').value.split(',').map(s => s.trim()).filter(Boolean); }
+    const r = await fetch('/api/admin/trunks' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('trunk-err').textContent = 'Save failed (' + r.status + ').'; return; }
+    $('trunk-modal').hidden = true; load();
+  }
+  async function delTrunk(t) { if (!confirm('Delete trunk ' + t.name + ' (' + t.tenant_id + ')?')) return; await fetch('/api/admin/trunks/' + encodeURIComponent(t.id), { method: 'DELETE' }); load(); }
+
+  // ── tenants & users ──
+  function openTenant() { $('t-name').value = ''; $('t-user').value = ''; $('t-pass').value = ''; $('t-err').textContent = ''; $('tenant-modal').hidden = false; $('t-name').focus(); }
+  async function saveTenant() {
+    const body = { name: $('t-name').value.trim(), username: $('t-user').value.trim(), password: $('t-pass').value };
+    if (!body.name || !body.username || !body.password) { $('t-err').textContent = 'All fields are required.'; return; }
+    const r = await fetch('/api/admin/tenants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('t-err').textContent = r.status === 409 ? 'Name or username already taken.' : 'Create failed (' + r.status + ').'; return; }
+    $('tenant-modal').hidden = true; load();
+  }
+  async function delTenant(t) {
+    const n = exts.filter(e => e.tenant_id === t.id).length, m = trunks.filter(x => x.tenant_id === t.id).length;
+    if (!confirm('Delete tenant "' + (t.name || t.id) + '" and ALL its data (' + n + ' extensions, ' + m + ' trunks, its users, config and dial plan)? This cannot be undone.')) return;
+    await fetch('/api/admin/tenants/' + encodeURIComponent(t.id), { method: 'DELETE' }); load();
+  }
+  function openUser(t) { $('user-title').textContent = 'Add user to ' + (t.name || t.id); $('u-tenant').value = t.id; $('u-name').value = ''; $('u-pass').value = ''; $('u-err').textContent = ''; $('user-modal').hidden = false; $('u-name').focus(); }
+  async function saveUser() {
+    const body = { tenant_id: $('u-tenant').value, username: $('u-name').value.trim(), password: $('u-pass').value };
+    if (!body.username || !body.password) { $('u-err').textContent = 'Username and password are required.'; return; }
+    const r = await fetch('/api/admin/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('u-err').textContent = r.status === 409 ? 'Username already taken.' : 'Add failed (' + r.status + ').'; return; }
+    $('user-modal').hidden = true; load();
+  }
+  async function delUser(u) { if (!confirm('Remove console user "' + u.username + '"?')) return; await fetch('/api/admin/users/' + encodeURIComponent(u.username), { method: 'DELETE' }); load(); }
+
+  // ── dial plans ──
+  let dpTenant = '';
+  async function openDp(t) {
+    dpTenant = t.id;
+    $('dp-title').textContent = 'Dial plan · ' + (t.name || t.id);
+    $('dp-err').textContent = ''; $('dp-ta').value = 'loading…';
+    $('dp-modal').hidden = false;
+    const r = await fetch('/api/admin/dialplan/' + encodeURIComponent(t.id));
+    if (!r.ok) { $('dp-ta').value = ''; $('dp-err').textContent = 'Load failed (' + r.status + ').'; return; }
+    $('dp-ta').value = JSON.stringify(await r.json(), null, 2);
+  }
+  async function saveDp() {
+    let g;
+    try { g = JSON.parse($('dp-ta').value); } catch (e) { $('dp-err').textContent = 'Invalid JSON: ' + e.message; return; }
+    const r = await fetch('/api/admin/dialplan/' + encodeURIComponent(dpTenant), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(g) });
+    if (!r.ok) { $('dp-err').textContent = 'Save failed (' + r.status + ').'; return; }
+    $('dp-err').style.color = 'var(--green)'; $('dp-err').textContent = 'Saved.';
+    setTimeout(() => { $('dp-err').style.color = ''; $('dp-modal').hidden = true; }, 700);
+  }
+
+  $('add-tenant').onclick = openTenant;
+  $('tenant-close').onclick = () => $('tenant-modal').hidden = true;
+  $('t-save').onclick = saveTenant;
+  $('user-close').onclick = () => $('user-modal').hidden = true;
+  $('u-save').onclick = saveUser;
+  $('dp-close').onclick = () => $('dp-modal').hidden = true;
+  $('dp-save').onclick = saveDp;
+  $('add-ext').onclick = () => openExt(null);
+  $('ext-close').onclick = () => $('ext-modal').hidden = true;
+  $('ext-save').onclick = saveExt;
+  $('add-trunk').onclick = () => openTrunk(null);
+  $('trunk-close').onclick = () => $('trunk-modal').hidden = true;
+  $('trunk-save').onclick = saveTrunk;
+  $('trunk-type').onchange = applyType;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { ['ext-modal', 'trunk-modal', 'tenant-modal', 'user-modal', 'dp-modal'].forEach(m => $(m).hidden = true); } });
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{{define "body"}}
+<section class="board">
+  <div class="board-head">
+    <div class="board-title amber">Global configuration</div>
+  </div>
+  <div class="config-body">
+    <div class="field">
+      <label for="cfg-moh">On-hold music URL</label>
+      <input id="cfg-moh" type="text" data-ref="cfg-moh" placeholder="https://example.com/hold.mp3">
+      <div class="config-hint">Played to the other party when an extension puts the call on hold. Must be a URL VoiceBlender can fetch (MP3).</div>
+    </div>
+    <div class="config-foot">
+      <span class="config-status" data-ref="cfg-status"></span>
+      <button class="btn-primary" data-ref="cfg-save">Save</button>
+    </div>
+  </div>
+</section>
+{{end}}
+
+{{define "pagescript"}}
+<script>
+(() => {
+  const { $ } = PBX;
+  PBX.onSnapshot(snap => {
+    const moh = $('cfg-moh');
+    if (document.activeElement !== moh) { moh.value = (snap.config && snap.config.hold_music_url) || ''; }
+  });
+  async function saveConfig() {
+    const url = $('cfg-moh').value.trim();
+    const s = $('cfg-status');
+    const r = await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hold_music_url: url }) });
+    if (r.ok) { s.style.color = 'var(--green)'; s.textContent = 'Saved'; }
+    else { s.style.color = 'var(--red)'; s.textContent = 'Save failed (' + r.status + ')'; }
+    setTimeout(() => { s.textContent = ''; }, 2500);
+  }
+  document.addEventListener('DOMContentLoaded', () => { $('cfg-save').onclick = saveConfig; });
+})();
+</script>
+{{end}}

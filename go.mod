@@ -3,8 +3,8 @@ module github.com/VoiceBlender/example-applications
 go 1.24
 
 require (
-	github.com/VoiceBlender/voiceblender-go v0.7.1
-	github.com/coder/websocket v1.8.14
+	github.com/VoiceBlender/voiceblender-go v0.11.0
+	github.com/coder/websocket v1.8.15
 	github.com/redis/go-redis/v9 v9.19.0
 )
 

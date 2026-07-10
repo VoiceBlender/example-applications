@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Softphone</title>
+<style>
+:root{
+  --bg:#0a0d12; --bg-2:#131820; --bg-3:#1b2230; --border:#262d3c; --border-bright:#3a4358;
+  --fg:#e6ebf3; --fg-dim:#8a93a3; --fg-mute:#565d6e;
+  --amber:#ffa940; --cyan:#5ec8e8; --green:#5ee2a4; --red:#ff5d6c;
+  --font-sans:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0; min-height:100vh;}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-sans);
+  display:grid; place-items:center; padding:20px;}
+.phone{width:min(360px,94vw); border:1px solid var(--border-bright); background:var(--bg-2);
+  box-shadow:0 28px 80px rgba(0,0,0,0.45);}
+.head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px;
+  border-bottom:1px solid var(--border); background:var(--bg);}
+.id{display:flex; flex-direction:column;}
+.id-ext{font-family:var(--font-mono); font-size:18px; font-variant-numeric:tabular-nums;}
+.id-acct{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute);}
+.pill{display:inline-flex; align-items:center; gap:7px; font-family:var(--font-mono);
+  font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute);
+  border:1px solid var(--border-bright); padding:6px 10px;}
+.pill .dot{width:7px; height:7px; border-radius:50%; background:var(--fg-mute);}
+.pill[data-s="online"]{color:var(--green); border-color:var(--green);}
+.pill[data-s="online"] .dot{background:var(--green); box-shadow:0 0 8px var(--green);}
+.pill[data-s="busy"]{color:var(--amber); border-color:var(--amber);}
+.pill[data-s="busy"] .dot{background:var(--amber);}
+.pill[data-s="offline"]{color:var(--red); border-color:var(--red);}
+.pill[data-s="offline"] .dot{background:var(--red);}
+.hdr-right{display:flex; align-items:center; gap:8px;}
+.dnd-btn{font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
+  background:transparent; border:1px solid var(--border-bright); color:var(--fg-mute); padding:6px 9px; cursor:pointer; transition:all 140ms;}
+.dnd-btn:hover{border-color:var(--red); color:var(--red);}
+.dnd-btn.on{background:var(--red); border-color:var(--red); color:var(--bg);}
+.body{padding:22px 20px;}
+.status{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); text-align:center;
+  min-height:16px; margin-bottom:14px; letter-spacing:0.06em;}
+.peer{text-align:center; margin:6px 0 20px;}
+.peer-label{font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em;
+  text-transform:uppercase; color:var(--fg-mute);}
+.peer-num{font-family:var(--font-mono); font-size:30px; font-variant-numeric:tabular-nums; margin-top:6px;}
+.timer{font-family:var(--font-mono); font-size:13px; color:var(--green); margin-top:4px; min-height:16px;}
+.dial input{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg);
+  padding:12px 14px; font-family:var(--font-mono); font-size:20px; text-align:center;
+  letter-spacing:0.08em; outline:none;}
+.dial input:focus{border-color:var(--amber);}
+.keys{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px;}
+.key{font-family:var(--font-mono); font-size:18px; background:var(--bg-3); border:1px solid var(--border);
+  color:var(--fg); padding:12px 0; cursor:pointer; transition:all 120ms;}
+.key:hover{border-color:var(--amber); color:var(--amber);}
+.actions{display:flex; gap:10px; margin-top:16px;}
+.btn{flex:1; font-family:var(--font-mono); font-size:12px; letter-spacing:0.14em; text-transform:uppercase;
+  padding:14px 0; cursor:pointer; border:1px solid var(--border-bright); background:transparent; color:var(--fg-dim);
+  transition:all 140ms;}
+.btn:hover{border-color:var(--amber); color:var(--amber);}
+.btn.call{border-color:var(--green); color:var(--green);}
+.btn.call:hover{background:var(--green); color:var(--bg);}
+.btn.answer{border-color:var(--green); color:var(--green);}
+.btn.answer:hover{background:var(--green); color:var(--bg);}
+.btn.hangup,.btn.reject{border-color:var(--red); color:var(--red);}
+.btn.hangup:hover,.btn.reject:hover{background:var(--red); color:var(--bg);}
+.btn.on{background:var(--amber); color:var(--bg); border-color:var(--amber);}
+.xfer-wrap{margin-top:12px;}
+.xfer{display:grid; grid-template-columns:1fr auto; gap:6px;}
+.xfer input{min-width:0; padding:11px 12px; font-size:14px;}
+.xfer button{padding:11px 16px;}
+.xfer-desk{width:100%; margin-top:6px; padding:11px 0; border-style:dashed;}
+.lists{margin-top:18px; border-top:1px solid var(--border); padding-top:12px;}
+.tabs{display:flex; gap:4px; margin-bottom:10px;}
+.tab{flex:1; font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
+  background:transparent; border:1px solid var(--border); color:var(--fg-mute); padding:8px 0; cursor:pointer; transition:all 140ms;}
+.tab:hover{color:var(--fg);}
+.tab.active{color:var(--amber); border-color:var(--amber);}
+.contact-add{display:grid; grid-template-columns:1fr 1fr auto; gap:6px; margin-bottom:8px;}
+.contact-add input{padding:9px 10px; font-size:13px; min-width:0;}
+.btn-add{font-family:var(--font-mono); font-size:16px; background:transparent; border:1px solid var(--green);
+  color:var(--green); width:40px; cursor:pointer; transition:all 140ms;}
+.btn-add:hover{background:var(--green); color:var(--bg);}
+.contact-row{display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border);}
+.contact-row:last-child{border-bottom:none;}
+.contact-info{flex:1; min-width:0; cursor:pointer;}
+.contact-info:hover .contact-name{color:var(--amber);}
+.contact-name{font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.contact-num{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); font-variant-numeric:tabular-nums;}
+.contact-del{background:transparent; border:1px solid var(--border-bright); color:var(--fg-mute);
+  font-family:var(--font-mono); font-size:11px; width:30px; height:30px; cursor:pointer; flex:0 0 auto;}
+.contact-del:hover{border-color:var(--red); color:var(--red);}
+.hist-title{font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
+.hist-row{display:flex; align-items:center; gap:10px; padding:8px 4px; cursor:pointer; border-bottom:1px solid var(--border);}
+.hist-row:last-child{border-bottom:none;}
+.hist-row:hover{background:rgba(255,255,255,0.03);}
+.hist-dir{font-family:var(--font-mono); font-size:14px; width:16px; text-align:center;}
+.hist-dir.out{color:var(--cyan);}
+.hist-dir.in{color:var(--green);}
+.hist-dir.missed{color:var(--red);}
+.hist-num{flex:1; font-family:var(--font-mono); font-size:14px; font-variant-numeric:tabular-nums;}
+.hist-time{font-family:var(--font-mono); font-size:10px; color:var(--fg-mute);}
+.hist-del{background:transparent; border:0; color:var(--fg-mute); cursor:pointer; font-size:12px; line-height:1; padding:2px 4px; flex:0 0 auto;}
+.hist-del:hover{color:var(--red);}
+.hist-empty{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); text-align:center; padding:12px;}
+.micbar{display:flex; align-items:center; gap:10px; padding:10px 20px; border-top:1px solid var(--border);}
+.micbar label{margin:0; flex:0 0 auto; font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute);}
+.micbar select{flex:1; min-width:0; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg); padding:7px 8px; font-family:var(--font-mono); font-size:12px; outline:none;}
+.micbar select:focus{border-color:var(--amber);}
+.foot{padding:12px 20px; border-top:1px solid var(--border); text-align:right;}
+.foot a{font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase;
+  color:var(--fg-mute); text-decoration:none;}
+.foot a:hover{color:var(--red);}
+.hidden{display:none !important;}
+</style>
+</head>
+<body>
+<audio id="sink" autoplay playsinline></audio>
+<div class="phone">
+  <div class="head">
+    <div class="id">
+      <div class="id-ext" id="ext">—</div>
+      <div class="id-acct" id="acct">softphone</div>
+    </div>
+    <div class="hdr-right">
+      <button class="dnd-btn" id="dnd" title="Do not disturb — silence incoming calls">DND</button>
+      <span class="pill" id="pill" data-s="offline"><span class="dot"></span><span id="pill-label">offline</span></span>
+    </div>
+  </div>
+  <div class="body">
+    <div class="status" id="status">connecting…</div>
+
+    <!-- idle: dialer -->
+    <div id="view-idle" class="hidden">
+      <div class="dial"><input id="num" type="text" inputmode="tel" placeholder="extension or number"></div>
+      <div class="keys" id="keys"></div>
+      <div class="actions"><button class="btn call" id="btn-call">Call</button></div>
+      <div class="lists">
+        <div class="tabs">
+          <button class="tab active" data-tab="recent">Recent</button>
+          <button class="tab" data-tab="contacts">Contacts</button>
+        </div>
+        <div id="tab-recent"><div id="hist"></div></div>
+        <div id="tab-contacts" class="hidden">
+          <div class="contact-add">
+            <input id="c-name" type="text" placeholder="name">
+            <input id="c-num" type="text" inputmode="tel" placeholder="number">
+            <button class="btn-add" id="c-add" title="Add contact">＋</button>
+          </div>
+          <div id="contacts"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ringing in / calling out / in call -->
+    <div id="view-call" class="hidden">
+      <div class="peer">
+        <div class="peer-label" id="peer-label">incoming</div>
+        <div class="peer-num" id="peer-num">—</div>
+        <div class="timer" id="timer"></div>
+      </div>
+      <div class="actions" id="call-actions"></div>
+      <div class="xfer-wrap hidden" id="xfer">
+        <div class="xfer">
+          <input id="xfer-num" type="text" inputmode="tel" placeholder="transfer to…">
+          <button class="btn call" id="xfer-send">Transfer</button>
+        </div>
+        <button class="btn xfer-desk" id="xfer-desk">↦ To my desk phone</button>
+      </div>
+    </div>
+  </div>
+  <div class="micbar">
+    <label for="mic">Mic</label>
+    <select id="mic" title="Microphone input"></select>
+  </div>
+  <div class="foot"><a href="/phone/logout">Sign out</a></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const sink = $('sink');
+
+  let ws=null, reconnectDelay=700, lastRx=0, hbTimer=null;
+  let pc=null, audioLive=false, muted=false, held=false;
+  // The persistent WebRTC leg carries a SILENT track while idle; the real
+  // microphone is acquired only during a call (replaceTrack, no renegotiation)
+  // and released when it ends, so the browser mic isn't held the whole session.
+  let micSender=null, micStream=null, silentTrack=null, silentCtx=null;
+  let micDeviceId=''; try{ micDeviceId=localStorage.getItem('pbx_phone_mic')||''; }catch(e){}
+  let dnd=false; try{ dnd=localStorage.getItem('pbx_phone_dnd')==='1'; }catch(e){}
+  function setDnd(on){ dnd=on; try{ localStorage.setItem('pbx_phone_dnd', on?'1':'0'); }catch(e){} send({type:'dnd', on:dnd}); render(); }
+  function micConstraints(){ return micDeviceId ? {audio:{deviceId:{exact:micDeviceId}}} : {audio:true}; }
+  let legID='';
+  // state: 'offline' | 'idle' | 'ringing' | 'calling' | 'incall'
+  let state='offline', peer='', callStart=0, timerInt=null;
+
+  function send(msg){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+  function setStatus(t){ $('status').textContent=t; }
+  function setPill(s,label){ $('pill').dataset.s=s; $('pill-label').textContent=label; }
+
+  function show(view){
+    $('view-idle').classList.toggle('hidden', view!=='idle');
+    $('view-call').classList.toggle('hidden', view!=='call');
+  }
+
+  function render(){
+    const db=$('dnd'); if(db) db.classList.toggle('on', dnd);
+    // Ringtone only while an incoming call is ringing.
+    if(state==='ringing') startRing(); else stopRing();
+    // Hold the microphone only during a call (placing or connected).
+    if(state==='calling' || state==='incall') enterCallAudio(); else exitCallAudio();
+    // Transfer bar is only usable during a connected call.
+    const xf=$('xfer'); if(xf){ xf.classList.toggle('hidden', state!=='incall'); if(state!=='incall') $('xfer-num').value=''; }
+    if(state==='offline'){ show(''); setPill('offline','offline'); setStatus(audioLive?'':'connecting…'); return; }
+    if(state==='idle'){
+      show('idle'); setPill('online', dnd?'do not disturb':'online');
+      setStatus(dnd?'do not disturb — incoming calls are silenced':'ready — enter a number to call'); stopTimer();
+      return;
+    }
+    if(state==='ringing'){
+      show('call'); setPill('busy','ringing'); setStatus('');
+      $('peer-label').textContent='incoming call'; $('peer-num').textContent=displayName(peer);
+      $('timer').textContent='';
+      setActions([
+        {cls:'btn answer', label:'Answer', on:()=>{ enterCallAudio(); send({type:'answer'}); }},
+        {cls:'btn reject', label:'Reject', on:()=>send({type:'reject'})},
+      ]);
+      return;
+    }
+    if(state==='calling'){
+      show('call'); setPill('busy','calling'); setStatus('');
+      $('peer-label').textContent='calling'; $('peer-num').textContent=displayName(peer);
+      $('timer').textContent='ringing…';
+      setActions([{cls:'btn hangup', label:'Cancel', on:()=>send({type:'hangup'})}]);
+      return;
+    }
+    if(state==='incall'){
+      show('call'); setPill('busy', held?'on hold':'in call'); setStatus('');
+      $('peer-label').textContent = held ? 'on hold' : 'connected'; $('peer-num').textContent=displayName(peer);
+      setActions([
+        {cls:'btn'+(held?' on':''), label:held?'Resume':'Hold', on:toggleHold},
+        {cls:'btn'+(muted?' on':''), label:muted?'Muted':'Mute', on:toggleMute},
+        {cls:'btn hangup', label:'Hang up', on:()=>send({type:'hangup'})},
+      ]);
+      startTimer();
+      return;
+    }
+  }
+  function setActions(list){
+    const a=$('call-actions'); a.textContent='';
+    list.forEach(it=>{ const b=document.createElement('button'); b.className=it.cls; b.textContent=it.label; b.onclick=it.on; a.appendChild(b); });
+  }
+  function startTimer(){
+    if(!callStart) callStart=Date.now();
+    if(timerInt) return;
+    const tick=()=>{ let s=Math.floor((Date.now()-callStart)/1000); const m=Math.floor(s/60); s%=60; $('timer').textContent=m+':'+String(s).padStart(2,'0'); };
+    tick(); timerInt=setInterval(tick,1000);
+  }
+  function stopTimer(){ if(timerInt){ clearInterval(timerInt); timerInt=null; } callStart=0; $('timer').textContent=''; }
+
+  function toIdle(){ state=(audioLive?'idle':'offline'); peer=''; muted=false; held=false; render(); }
+
+  // ── incoming-call ringtone (Web Audio, no external file) ──────────────────
+  let ringCtx=null, ringTimer=null;
+  function startRing(){
+    if(ringTimer) return;
+    try{ ringCtx = ringCtx || new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
+    if(ringCtx.state==='suspended') ringCtx.resume().catch(()=>{});
+    // A warbling two-tone trill — the classic electronic "ring-ring" bell that
+    // alerts the callee (distinct from the caller-side ringback tone).
+    const ring=(at,dur)=>{
+      const o=ringCtx.createOscillator(), g=ringCtx.createGain();
+      o.type='sine'; o.connect(g); g.connect(ringCtx.destination);
+      let hi=true;
+      for(let x=at; x<at+dur; x+=0.045){ o.frequency.setValueAtTime(hi?1000:760, x); hi=!hi; }
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.18, at+0.02);
+      g.gain.setValueAtTime(0.18, at+dur-0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, at+dur);
+      o.start(at); o.stop(at+dur);
+    };
+    const cadence=()=>{ if(ringCtx.state==='suspended') ringCtx.resume().catch(()=>{}); const t=ringCtx.currentTime; ring(t+0.0,0.7); ring(t+0.9,0.7); };
+    cadence();
+    ringTimer=setInterval(cadence, 3000); // double-ring every 3s
+  }
+  function stopRing(){ if(ringTimer){ clearInterval(ringTimer); ringTimer=null; } }
+
+  function toggleMute(){ muted=!muted; if(micStream) micStream.getAudioTracks().forEach(t=>t.enabled=!muted); send({type:'mute',on:muted}); render(); }
+  function toggleHold(){ held=!held; send({type:'hold',on:held}); render(); }
+  function xferSend(){ const n=$('xfer-num').value.trim(); if(!n){ $('xfer-num').focus(); return; } send({type:'transfer', number:n}); $('xfer-num').value=''; setStatus('transferring…'); }
+
+  // ── WebSocket ───────────────────────────────────────────────────────────
+  // Heartbeat: a dropped connection often doesn't fire onclose (the socket stays
+  // stale), so we ping every 10s and, if we've heard nothing back for 25s, close
+  // the socket ourselves — which triggers the reconnect below.
+  function startHeartbeat(){ stopHeartbeat(); lastRx=Date.now(); hbTimer=setInterval(()=>{
+      if(Date.now()-lastRx > 25000){ try{ ws.close(); }catch(e){} return; }
+      send({type:'ping'});
+    }, 10000); }
+  function stopHeartbeat(){ if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
+  function connect(){
+    const proto = location.protocol==='https:'?'wss://':'ws://';
+    ws=new WebSocket(proto+location.host+'/api/phone/stream');
+    ws.onopen=()=>{ reconnectDelay=700; startHeartbeat(); if(dnd) send({type:'dnd', on:true}); setStatus('audio init…'); startAudio(); };
+    ws.onclose=()=>{ stopHeartbeat(); stopAudio(); state='offline'; render(); setStatus('reconnecting…'); setTimeout(connect, reconnectDelay); reconnectDelay=Math.min(reconnectDelay*1.6,6000); };
+    ws.onerror=()=>{ try{ws.close();}catch(e){} };
+    ws.onmessage=(m)=>{ lastRx=Date.now(); let msg; try{ msg=JSON.parse(m.data); }catch(e){ return; } handle(msg); };
+  }
+  function handle(msg){
+    switch(msg.type){
+      case 'pong': break; // heartbeat reply (lastRx already refreshed)
+      case 'hello': $('ext').textContent=msg.extension||'—'; $('acct').textContent=msg.account||'softphone'; document.title='Softphone · '+(msg.extension||''); break;
+      case 'webrtc.answer': legID=msg.leg_id||''; onAnswer(msg); break;
+      case 'webrtc.candidate': onRemoteCandidate(msg); break;
+      case 'webrtc.error': setStatus(msg.message||'audio failed'); break;
+      case 'ring': if(state==='idle'){ peer=msg.from||msg.to||'?'; state='ringing'; render(); } break;
+      case 'stop-ring': if(state==='ringing'){ toIdle(); } break;
+      case 'call.connected': peer=msg.peer||peer; state='incall'; callStart=Date.now(); render(); break;
+      case 'call.ended': toIdle(); break;
+      case 'hold': held=!!msg.on; render(); break;
+      case 'call.error': setStatus(msg.message||'call failed'); if(state==='calling') toIdle(); break;
+      case 'history': history=msg.items||[]; renderHistory(); break;
+      case 'phonebook': contacts=msg.items||[]; renderContacts(); renderHistory(); if(state==='ringing'||state==='calling'||state==='incall') render(); break;
+    }
+  }
+
+  // ── recent calls / re-dial ───────────────────────────────────────────────
+  let history=[];
+  function relTime(iso){
+    const t=Date.parse(iso); if(isNaN(t)) return '';
+    let s=Math.floor((Date.now()-t)/1000);
+    if(s<60) return 'just now';
+    if(s<3600) return Math.floor(s/60)+'m ago';
+    if(s<86400) return Math.floor(s/3600)+'h ago';
+    return Math.floor(s/86400)+'d ago';
+  }
+  function renderHistory(){
+    const box=$('hist'); box.textContent='';
+    if(!history.length){ const e=document.createElement('div'); e.className='hist-empty'; e.textContent='No recent calls'; box.appendChild(e); return; }
+    history.forEach((h,i)=>{
+      const row=document.createElement('div'); row.className='hist-row';
+      const dir=document.createElement('div'); dir.className='hist-dir '+(h.dir||'out');
+      dir.textContent = h.dir==='in'?'↘':(h.dir==='missed'?'✕':'↗');
+      const num=document.createElement('div'); num.className='hist-num'; num.textContent=displayName(h.number);
+      const tm=document.createElement('div'); tm.className='hist-time'; tm.textContent=relTime(h.at);
+      const del=document.createElement('button'); del.className='hist-del'; del.textContent='✕'; del.title='Remove';
+      del.onclick=(e)=>{ e.stopPropagation(); send({type:'history.remove', index:i}); };
+      row.append(dir,num,tm,del);
+      row.onclick=()=>{ if(state!=='idle') return; $('num').value=h.number||''; placeCall(); };
+      box.appendChild(row);
+    });
+  }
+
+  // ── phonebook ─────────────────────────────────────────────────────────────
+  let contacts=[];
+  function nameFor(number){
+    if(!number) return null;
+    const n=String(number).trim();
+    const c=contacts.find(c=>String(c.number).trim()===n);
+    return c ? (c.name||null) : null;
+  }
+  function displayName(number){ return nameFor(number) || number || '—'; }
+  function saveContacts(){ send({type:'contacts.save', contacts}); renderContacts(); }
+  function renderContacts(){
+    const box=$('contacts'); box.textContent='';
+    if(!contacts.length){ const e=document.createElement('div'); e.className='hist-empty'; e.textContent='No contacts yet'; box.appendChild(e); return; }
+    contacts.forEach((c,i)=>{
+      const row=document.createElement('div'); row.className='contact-row';
+      const info=document.createElement('div'); info.className='contact-info';
+      const nm=document.createElement('div'); nm.className='contact-name'; nm.textContent=c.name||c.number||'?';
+      const nu=document.createElement('div'); nu.className='contact-num'; nu.textContent=c.number||'';
+      info.append(nm,nu);
+      info.onclick=()=>{ if(state!=='idle') return; $('num').value=c.number||''; placeCall(); };
+      const del=document.createElement('button'); del.className='contact-del'; del.textContent='✕';
+      del.title='Delete'; del.onclick=()=>{ contacts.splice(i,1); saveContacts(); };
+      row.append(info,del);
+      box.appendChild(row);
+    });
+  }
+  function addContact(){
+    const name=$('c-name').value.trim(), number=$('c-num').value.trim();
+    if(!number){ $('c-num').focus(); return; }
+    contacts.push({name, number});
+    $('c-name').value=''; $('c-num').value='';
+    saveContacts();
+  }
+  function switchTab(name){
+    document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.tab===name));
+    $('tab-recent').classList.toggle('hidden', name!=='recent');
+    $('tab-contacts').classList.toggle('hidden', name!=='contacts');
+  }
+
+  // ── WebRTC (mirrors the contact-centre agent) ─────────────────────────────
+  // makeSilentTrack returns a silent audio track (no microphone) used to keep the
+  // WebRTC leg's audio sender alive while idle.
+  function makeSilentTrack(){
+    try{
+      silentCtx = silentCtx || new (window.AudioContext||window.webkitAudioContext)();
+      const osc=silentCtx.createOscillator(), dst=silentCtx.createMediaStreamDestination(), g=silentCtx.createGain();
+      g.gain.value=0; osc.connect(g); g.connect(dst); osc.start();
+      return dst.stream.getAudioTracks()[0];
+    }catch(e){ return null; }
+  }
+  async function startAudio(){
+    if(pc) return;
+    pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    silentTrack = makeSilentTrack();
+    // A sendrecv audio transceiver seeded with the silent track; its sender is
+    // swapped to the mic during a call and back to silence afterwards.
+    const tr = silentTrack ? pc.addTransceiver(silentTrack, {direction:'sendrecv'}) : pc.addTransceiver('audio', {direction:'sendrecv'});
+    micSender = tr.sender;
+    pc.ontrack=(ev)=>{ sink.srcObject=ev.streams[0]; const p=sink.play(); if(p&&p.catch) p.catch(()=>{}); };
+    pc.onicecandidate=(ev)=>{ if(ev.candidate) send({type:'webrtc.candidate', candidate:ev.candidate.toJSON()}); };
+    pc.onconnectionstatechange=()=>{
+      if(!pc) return;
+      const s=pc.connectionState;
+      if(s==='connected'){ audioLive=true; if(state==='offline') state='idle'; render(); }
+      else if(s==='failed'){ audioLive=false; setStatus('audio failed'); }
+    };
+    try{
+      const offer=await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      send({type:'webrtc.offer', sdp:pc.localDescription.sdp});
+    }catch(e){ setStatus('offer error'); }
+  }
+  // enterCallAudio acquires the microphone and routes it into the live leg. Called
+  // when a call starts; the mic-permission prompt appears on the first call only.
+  async function enterCallAudio(){
+    if(micStream || !micSender) return;
+    try{ micStream = await navigator.mediaDevices.getUserMedia(micConstraints()); }
+    catch(e){
+      // Selected device gone/unusable → fall back to the default mic.
+      if(micDeviceId){ try{ micStream = await navigator.mediaDevices.getUserMedia({audio:true}); }catch(e2){ setStatus('microphone denied'); return; } }
+      else { setStatus('microphone denied'); return; }
+    }
+    const t = micStream.getAudioTracks()[0];
+    t.enabled = !muted;
+    try{ await micSender.replaceTrack(t); }catch(e){}
+    loadMics(); // permission granted → real device labels are now available
+  }
+  // loadMics populates the input selector with the device's audio inputs.
+  async function loadMics(){
+    const sel=$('mic'); if(!sel) return;
+    let devs=[]; try{ devs=await navigator.mediaDevices.enumerateDevices(); }catch(e){ return; }
+    const mics=devs.filter(d=>d.kind==='audioinput');
+    sel.innerHTML='';
+    const def=document.createElement('option'); def.value=''; def.textContent='Default microphone'; sel.appendChild(def);
+    mics.forEach((d,i)=>{ const o=document.createElement('option'); o.value=d.deviceId; o.textContent=d.label||('Microphone '+(i+1)); sel.appendChild(o); });
+    sel.value = (micDeviceId && mics.some(d=>d.deviceId===micDeviceId)) ? micDeviceId : '';
+  }
+  // selectMic remembers the chosen input and, if a call is live, switches to it.
+  async function selectMic(id){
+    micDeviceId=id; try{ localStorage.setItem('pbx_phone_mic', id); }catch(e){}
+    if(!micStream) return; // idle → applies on the next call
+    try{
+      const ns=await navigator.mediaDevices.getUserMedia(micConstraints());
+      const t=ns.getAudioTracks()[0]; t.enabled=!muted;
+      if(micSender) await micSender.replaceTrack(t);
+      micStream.getTracks().forEach(x=>x.stop());
+      micStream=ns;
+    }catch(e){ setStatus('mic switch failed'); }
+  }
+  // exitCallAudio releases the microphone and restores the silent track, so the
+  // browser stops showing the mic as in use between calls.
+  function exitCallAudio(){
+    if(!micStream) return;
+    if(micSender){ try{ micSender.replaceTrack(silentTrack); }catch(e){} }
+    micStream.getTracks().forEach(t=>t.stop());
+    micStream=null;
+  }
+  async function onAnswer(msg){ if(!pc) return; try{ await pc.setRemoteDescription({type:'answer', sdp:msg.sdp}); }catch(e){ setStatus('answer error'); } }
+  async function onRemoteCandidate(msg){ if(!pc||!msg.candidate) return; try{ await pc.addIceCandidate(msg.candidate); }catch(e){} }
+  function stopAudio(){
+    exitCallAudio();
+    if(pc){ try{pc.close();}catch(e){} pc=null; }
+    micSender=null; silentTrack=null;
+    if(silentCtx){ try{silentCtx.close();}catch(e){} silentCtx=null; }
+    sink.srcObject=null; audioLive=false; legID='';
+  }
+
+  // ── dialer ────────────────────────────────────────────────────────────────
+  function placeCall(){
+    const n=$('num').value.trim();
+    if(!n){ $('num').focus(); return; }
+    if(state!=='idle') return;
+    peer=n; state='calling'; render();
+    send({type:'dial', number:n});
+  }
+  const KEYS=['1','2','3','4','5','6','7','8','9','*','0','#'];
+  const keysEl=$('keys');
+  KEYS.forEach(k=>{ const b=document.createElement('button'); b.className='key'; b.textContent=k;
+    b.onclick=()=>{ $('num').value+=k; }; keysEl.appendChild(b); });
+  $('btn-call').onclick=placeCall;
+  $('num').addEventListener('keydown', e=>{ if(e.key==='Enter') placeCall(); });
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
+  $('xfer-send').onclick=xferSend;
+  $('xfer-num').addEventListener('keydown', e=>{ if(e.key==='Enter') xferSend(); });
+  $('xfer-desk').onclick=()=>{ send({type:'transfer-desk'}); setStatus('sending to desk phone…'); };
+  $('c-add').onclick=addContact;
+  $('c-num').addEventListener('keydown', e=>{ if(e.key==='Enter') addContact(); });
+
+  // Prime the audio context on the first user interaction so the ringtone can
+  // play when a call arrives (browsers block audio until a gesture).
+  function unlockAudio(){ try{ ringCtx = ringCtx || new (window.AudioContext||window.webkitAudioContext)(); if(ringCtx.state==='suspended') ringCtx.resume(); }catch(e){} }
+  window.addEventListener('pointerdown', unlockAudio, {once:true});
+  window.addEventListener('keydown', unlockAudio, {once:true});
+
+  $('dnd').onclick = () => setDnd(!dnd);
+  // Microphone selector.
+  $('mic').onchange = () => selectMic($('mic').value);
+  loadMics();
+  if(navigator.mediaDevices && navigator.mediaDevices.addEventListener){ navigator.mediaDevices.addEventListener('devicechange', loadMics); }
+
+  render();
+  connect();
+})();
+</script>
+</body>
+</html>
