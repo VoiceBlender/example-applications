@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Softphone · Sign in</title>
+<style>
+:root{
+  --bg:#0a0d12; --bg-2:#131820; --border:#262d3c; --border-bright:#3a4358;
+  --fg:#e6ebf3; --fg-dim:#8a93a3; --fg-mute:#565d6e; --amber:#ffa940; --red:#ff5d6c;
+  --font-sans:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0;min-height:100vh;}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-sans);
+  display:grid; place-items:center; padding:20px;}
+.card{width:min(380px,94vw); border:1px solid var(--border-bright); background:var(--bg-2);
+  box-shadow:0 28px 80px rgba(0,0,0,0.45);}
+.head{padding:18px 22px; border-bottom:1px solid var(--border);}
+.title{font-family:var(--font-mono); font-size:12px; letter-spacing:0.2em; text-transform:uppercase;}
+.sub{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); margin-top:4px;}
+.body{padding:22px;}
+label{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em;
+  text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
+.field{margin-bottom:14px;}
+input{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg);
+  padding:11px 12px; font-family:var(--font-mono); font-size:14px; outline:none;}
+input:focus{border-color:var(--amber);}
+button{width:100%; font-family:var(--font-mono); font-size:11px; letter-spacing:0.18em;
+  text-transform:uppercase; background:transparent; border:1px solid var(--amber); color:var(--amber);
+  padding:12px; cursor:pointer; transition:all 160ms; margin-top:4px;}
+button:hover{background:var(--amber); color:var(--bg);}
+.err{color:var(--red); font-family:var(--font-mono); font-size:11px; margin-bottom:12px; min-height:14px;}
+</style>
+</head>
+<body>
+<form class="card" method="post" action="/phone/login">
+  <div class="head">
+    <div class="title">VoiceBlender Softphone</div>
+    <div class="sub">sign in with your WebRTC account</div>
+  </div>
+  <div class="body">
+    {{if .Failed}}<div class="err">Invalid account or password.</div>{{else}}<div class="err"></div>{{end}}
+    <div class="field"><label>Account</label><input type="text" name="username" autocomplete="username" autofocus></div>
+    <div class="field"><label>Password</label><input type="password" name="password" autocomplete="current-password"></div>
+    <button type="submit">Sign in</button>
+  </div>
+</form>
+</body>
+</html>

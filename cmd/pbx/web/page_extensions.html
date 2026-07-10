@@ -1,0 +1,161 @@
+{{define "body"}}
+<section class="board">
+  <div class="board-head">
+    <div class="board-title">Extensions</div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a class="cc-btn" href="/phone/login" target="_blank">Open softphone ↗</a>
+      <button class="add-btn" data-ref="add-ext">+ Add extension</button>
+    </div>
+  </div>
+  <div class="grid-head ext-cols">
+    <div>Ext</div><div>Name</div><div class="hide-sm">Devices / Source</div><div>Status</div><div></div>
+  </div>
+  <div data-ref="ext-rows"></div>
+  <div class="empty" data-ref="ext-empty" hidden>No extensions configured</div>
+</section>
+{{end}}
+
+{{define "modals"}}
+<div class="modal-backdrop" data-ref="ext-modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" data-ref="ext-modal-title">Add extension</div>
+      <button class="modal-close" data-ref="ext-modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" data-ref="ext-id">
+      <div class="field"><label>Extension number</label><input type="text" data-ref="ext-number" placeholder="1001"></div>
+      <div class="field"><label>Display name</label><input type="text" data-ref="ext-name" placeholder="Alice"></div>
+      <div class="field"><label>SIP username — blank = auto &lt;tenant&gt;-&lt;number&gt; (globally unique; configure the phone with this)</label><input type="text" data-ref="ext-username" placeholder="auto"></div>
+      <div class="field"><label>Password (blank = unchanged)</label><input type="password" data-ref="ext-password" placeholder="secret"></div>
+      <div class="field"><label>Codecs — priority order, comma-separated (blank = default)</label><input type="text" data-ref="ext-codecs" placeholder="opus, PCMA, PCMU" list="codec-list"></div>
+      <div class="field"><label>Registration expiry (seconds, blank = 60)</label><input type="number" data-ref="ext-regexp" placeholder="60"></div>
+      <datalist id="codec-list"><option value="opus"><option value="PCMU"><option value="PCMA"><option value="G722"><option value="G729"><option value="telephone-event"></datalist>
+
+      <div class="field-sub">WebRTC softphone accounts</div>
+      <div data-ref="ext-accts"></div>
+      <button type="button" class="acct-add" data-ref="ext-acct-add">+ Add WebRTC account</button>
+      <div class="config-hint">Each account signs in at <a href="/phone/login" target="_blank" style="color:var(--cyan)">/phone/login</a> and becomes an extra device that rings as this extension. Leave a password blank to keep the existing one.</div>
+
+      <div class="form-err" data-ref="ext-err"></div>
+      <div class="modal-foot"><button class="btn-primary" data-ref="ext-save">Save</button></div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "pagescript"}}
+<script>
+(() => {
+  const { $, el, cell2, extStateChip } = PBX;
+
+  function deviceList(devs) {
+    const wrap = el('div', 'dev-list');
+    (devs || []).forEach(d => {
+      const row = el('div', 'dev' + (d.online ? ' online' : ''));
+      row.appendChild(el('span', 'dev-dot'));
+      row.appendChild(document.createTextNode('☎ ' + (d.label || d.username)));
+      row.appendChild(el('span', 'dev-state', d.online ? (d.state || 'online') : 'offline'));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function render(snap) {
+    const er = $('ext-rows'); er.textContent = '';
+    const exts = snap.extensions || [];
+    $('ext-empty').hidden = exts.length > 0;
+    exts.forEach(e => {
+      const row = el('div', 'row ext-cols');
+      row.appendChild(el('div', 'cell-mono', e.number));
+      row.appendChild(cell2(e.name || '—', e.username || e.number));
+      // Devices / source: SIP registration (user-agent + source) plus WebRTC devices.
+      const dev = el('div');
+      if (e.registered) {
+        dev.appendChild(cell2(e.user_agent || e.source || '—', e.user_agent ? (e.source || '') : ''));
+      } else if (!e.webrtc_devices || !e.webrtc_devices.length) {
+        dev.appendChild(el('div', 'cell-sub', '—'));
+      }
+      if (e.webrtc_devices && e.webrtc_devices.length) dev.appendChild(deviceList(e.webrtc_devices));
+      dev.classList.add('hide-sm');
+      row.appendChild(dev);
+      const s = el('div'); s.appendChild(extStateChip(e)); row.appendChild(s);
+      const act = el('div', 'row-actions');
+      const edit = el('button', 'cc-btn', 'Edit'); edit.onclick = () => openExt(e); act.appendChild(edit);
+      const del = el('button', 'cc-btn danger', 'Delete'); del.onclick = () => delExt(e); act.appendChild(del);
+      row.appendChild(act);
+      er.appendChild(row);
+    });
+  }
+  PBX.onSnapshot(render);
+
+  // ── WebRTC account rows ─────────────────────────────────────────────────
+  function acctRow(a) {
+    a = a || {};
+    const row = el('div', 'acct-row');
+    const u = el('input'); u.type = 'text'; u.placeholder = 'account'; u.dataset.k = 'username'; u.value = a.username || '';
+    const l = el('input'); l.type = 'text'; l.placeholder = 'label'; l.dataset.k = 'label'; l.value = a.label || '';
+    const p = el('input'); p.type = 'password'; p.placeholder = a.username ? '••••• (unchanged)' : 'password'; p.dataset.k = 'password';
+    const d = el('button', 'acct-del', '✕'); d.type = 'button'; d.onclick = () => row.remove();
+    row.append(u, l, p, d);
+    return row;
+  }
+  function collectAccts() {
+    const out = [];
+    $('ext-accts').querySelectorAll('.acct-row').forEach(r => {
+      const get = k => r.querySelector('[data-k="' + k + '"]').value.trim();
+      const username = get('username');
+      if (!username) return;
+      out.push({ username, label: get('label'), password: r.querySelector('[data-k="password"]').value });
+    });
+    return out;
+  }
+
+  function openExt(e) {
+    $('ext-modal-title').textContent = e ? 'Edit extension' : 'Add extension';
+    $('ext-id').value = e ? e.id : '';
+    $('ext-number').value = e ? e.number : '';
+    $('ext-name').value = e ? (e.name || '') : '';
+    $('ext-username').value = e ? (e.username || '') : '';
+    $('ext-password').value = '';
+    $('ext-codecs').value = e && e.codecs ? e.codecs.join(', ') : '';
+    $('ext-regexp').value = e && e.reg_expiry ? e.reg_expiry : '';
+    const box = $('ext-accts'); box.textContent = '';
+    if (e && e.webrtc_devices) e.webrtc_devices.forEach(d => box.appendChild(acctRow(d)));
+    $('ext-err').textContent = '';
+    $('ext-modal').hidden = false;
+    $('ext-number').focus();
+  }
+  function closeExt() { $('ext-modal').hidden = true; }
+  async function saveExt() {
+    const id = $('ext-id').value;
+    const body = {
+      number: $('ext-number').value.trim(), name: $('ext-name').value.trim(),
+      username: $('ext-username').value.trim(), password: $('ext-password').value,
+      codecs: $('ext-codecs').value.split(',').map(s => s.trim()).filter(Boolean),
+      webrtc_accounts: collectAccts(),
+    };
+    const rex = parseInt($('ext-regexp').value, 10); if (!isNaN(rex) && rex > 0) body.reg_expiry = rex;
+    if (!body.number) { $('ext-err').textContent = 'Extension number is required.'; return; }
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? ('/api/extensions/' + encodeURIComponent(id)) : '/api/extensions';
+    const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('ext-err').textContent = 'Save failed (' + r.status + ').'; return; }
+    closeExt();
+  }
+  async function delExt(e) {
+    if (!confirm('Delete extension ' + e.number + '?')) return;
+    await fetch('/api/extensions/' + encodeURIComponent(e.id), { method: 'DELETE' });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    $('add-ext').onclick = () => openExt(null);
+    $('ext-modal-close').onclick = closeExt;
+    $('ext-save').onclick = saveExt;
+    $('ext-acct-add').onclick = () => $('ext-accts').appendChild(acctRow());
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeExt(); });
+    $('ext-modal').addEventListener('click', e => { if (e.target === $('ext-modal')) closeExt(); });
+  });
+})();
+</script>
+{{end}}

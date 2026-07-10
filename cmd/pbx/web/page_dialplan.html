@@ -1,0 +1,82 @@
+{{define "body"}}
+<section class="board">
+  <div class="board-head">
+    <div class="board-title green">Inbound dial plan</div>
+    <div class="dp-toolbar">
+      <button class="cc-btn" data-dp-add="match">+ Match</button>
+      <button class="cc-btn" data-dp-add="answer">+ Answer</button>
+      <button class="cc-btn" data-dp-add="wait">+ Wait</button>
+      <button class="cc-btn" data-dp-add="gather">+ Gather</button>
+      <button class="cc-btn" data-dp-add="ext">+ Extension</button>
+      <button class="cc-btn" data-dp-add="ivr">+ IVR</button>
+      <button class="cc-btn" data-dp-add="forward">+ Forward</button>
+      <button class="cc-btn" data-dp-add="play">+ Play</button>
+      <button class="cc-btn" data-dp-add="tts">+ TTS</button>
+      <button class="cc-btn" data-dp-add="reject">+ Reject</button>
+      <button class="cc-btn" data-ref="dp-reload">Reload</button>
+      <button class="btn-primary" data-ref="dp-save">Save</button>
+    </div>
+  </div>
+  <div class="dp-hint">Inbound calls from trunks walk this graph. Click an output dot then an input dot to connect; drag a node's header to move it; click a node to edit it; click a wire to remove it. <span data-ref="dp-status"></span></div>
+  <div class="dp-canvas" data-ref="dp-canvas">
+    <svg class="dp-wires" data-ref="dp-wires"></svg>
+  </div>
+</section>
+{{end}}
+
+{{define "modals"}}
+<div class="modal-backdrop" data-ref="dpn-modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" data-ref="dpn-title">Edit node</div>
+      <button class="modal-close" data-ref="dpn-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field dpn-f dpn-match"><label>Trunk</label><select data-ref="dpn-trunk"></select></div>
+      <div class="field dpn-f dpn-match"><label>Dialed number (DID) match</label>
+        <select data-ref="dpn-didmode">
+          <option value="any">Any</option>
+          <option value="exact">Exact</option>
+          <option value="prefix">Starts with</option>
+          <option value="regex">Regex</option>
+        </select></div>
+      <div class="field dpn-f dpn-match"><label>DID value</label><input type="text" data-ref="dpn-did" placeholder="3005113"></div>
+      <div class="field dpn-f dpn-ext"><label>Extension(s) — comma-separated rings all at once (first to answer wins)</label><input type="text" data-ref="dpn-ext" list="dpn-ext-list" placeholder="1001 or 1001,1002,1003"><datalist id="dpn-ext-list"></datalist></div>
+      <div class="field dpn-f dpn-ext"><label>Ring time (seconds before no-answer)</label><input type="number" data-ref="dpn-extring" placeholder="30"></div>
+      <div class="field dpn-f dpn-forward"><label>External number</label><input type="text" data-ref="dpn-fwdnum" placeholder="+15551234567"></div>
+      <div class="field dpn-f dpn-forward"><label>Via trunk</label><select data-ref="dpn-fwdtrunk"></select></div>
+      <div class="field dpn-f dpn-forward"><label>Ring time (seconds before no-answer)</label><input type="number" data-ref="dpn-fwdring" placeholder="30"></div>
+      <div class="field dpn-f dpn-play"><label>Audio file URL (MP3)</label><input type="text" data-ref="dpn-url" placeholder="https://example.com/greeting.mp3"></div>
+      <div class="field dpn-f dpn-tts"><label>Text to speak</label><input type="text" data-ref="dpn-text" placeholder="Welcome to Acme."></div>
+      <div class="field dpn-f dpn-tts"><label>Voice (optional)</label><input type="text" data-ref="dpn-voice" placeholder="Rachel"></div>
+      <div class="field dpn-f dpn-gather"><label>Input</label>
+        <select data-ref="dpn-ginput">
+          <option value="dtmf">DTMF (keypad)</option>
+          <option value="speech">Speech (say the option)</option>
+          <option value="both">Both (DTMF or speech)</option>
+        </select></div>
+      <div class="field dpn-f dpn-gather"><label>Prompt — text to speak (optional)</label><input type="text" data-ref="dpn-gtext" placeholder="For sales press or say 1, for support 2."></div>
+      <div class="field dpn-f dpn-gather"><label>Prompt voice (optional)</label><input type="text" data-ref="dpn-gvoice" placeholder="Rachel"></div>
+      <div class="field dpn-f dpn-gather"><label>…or audio file URL (optional)</label><input type="text" data-ref="dpn-gurl" placeholder="https://example.com/menu.mp3"></div>
+      <div class="field dpn-f dpn-gather"><label>Options (comma-separated — each becomes an output). For speech, use keywords, e.g. sales,support</label><input type="text" data-ref="dpn-goptions" placeholder="1,2,0 or sales,support"></div>
+      <div class="field dpn-f dpn-gather"><label>Max digits (0 = until #, DTMF only)</label><input type="number" data-ref="dpn-gnum" placeholder="0"></div>
+      <div class="field dpn-f dpn-gather"><label>Speech language</label><input type="text" data-ref="dpn-glang" placeholder="en"></div>
+      <div class="field dpn-f dpn-gather"><label>Timeout (seconds)</label><input type="number" data-ref="dpn-gtimeout" placeholder="7"></div>
+      <div class="field dpn-f dpn-reject"><label>Reason</label>
+        <select data-ref="dpn-reason">
+          <option value="declined">Declined (603)</option>
+          <option value="busy">Busy (486)</option>
+          <option value="unavailable">Unavailable (480)</option>
+          <option value="not_found">Not found (404)</option>
+        </select></div>
+      <div class="field dpn-f dpn-wait"><label>Wait (seconds)</label><input type="number" data-ref="dpn-wsecs" placeholder="1"></div>
+      <div class="dpn-none dpn-f" data-ref="dpn-none">This node has no settings.</div>
+      <div class="modal-foot"><button class="btn-primary" data-ref="dpn-save">Save</button></div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "pagescript"}}
+<script src="/static/dialplan.js"></script>
+{{end}}

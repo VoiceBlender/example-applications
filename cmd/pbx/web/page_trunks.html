@@ -1,0 +1,127 @@
+{{define "body"}}
+<section class="board">
+  <div class="board-head">
+    <div class="board-title cyan">Trunks</div>
+    <button class="add-btn" data-ref="add-trunk">+ Add trunk</button>
+  </div>
+  <div class="grid-head trunk-cols">
+    <div>Name</div><div>Type</div><div class="hide-sm">Registrar / Peer</div><div class="hide-sm">Username</div><div>Status</div><div></div>
+  </div>
+  <div data-ref="trunk-rows"></div>
+  <div class="empty" data-ref="trunk-empty" hidden>No trunks configured</div>
+</section>
+{{end}}
+
+{{define "modals"}}
+<div class="modal-backdrop" data-ref="trunk-modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" data-ref="trunk-modal-title">Add trunk</div>
+      <button class="modal-close" data-ref="trunk-modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" data-ref="trunk-id">
+      <div class="field"><label>Name</label><input type="text" data-ref="trunk-name" placeholder="Provider A"></div>
+      <div class="field"><label>Type</label><select data-ref="trunk-type">
+        <option value="register">Register (VoiceBlender registers to provider)</option>
+        <option value="ip">IP (static peer, source-IP authenticated)</option>
+      </select></div>
+      <div class="field reg-field"><label>Registrar URI</label><input type="text" data-ref="trunk-registrar" placeholder="sip:sip.provider.com"></div>
+      <div class="field reg-field"><label>AOR</label><input type="text" data-ref="trunk-aor" placeholder="sip:12345@sip.provider.com"></div>
+      <div class="field reg-field"><label>Username</label><input type="text" data-ref="trunk-username" placeholder="12345"></div>
+      <div class="field reg-field"><label>Password</label><input type="password" data-ref="trunk-password"></div>
+      <div class="field reg-field"><label>Expires (seconds)</label><input type="number" data-ref="trunk-expires" placeholder="3600"></div>
+      <div class="field ip-field"><label>Peer URI</label><input type="text" data-ref="trunk-peer" placeholder="sip:203.0.113.5"></div>
+      <div class="field ip-field"><label>Peer IPs (comma-separated, used for inbound auth)</label><input type="text" data-ref="trunk-peerips" placeholder="203.0.113.5"></div>
+      <div class="form-err" data-ref="trunk-err"></div>
+      <div class="modal-foot"><button class="btn-primary" data-ref="trunk-save">Save</button></div>
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "pagescript"}}
+<script>
+(() => {
+  const { $, el, trunkStateChip } = PBX;
+
+  function render(snap) {
+    const tr = $('trunk-rows'); tr.textContent = '';
+    const trunks = snap.trunks || [];
+    $('trunk-empty').hidden = trunks.length > 0;
+    trunks.forEach(t => {
+      const row = el('div', 'row trunk-cols');
+      row.appendChild(el('div', null, t.name || '—'));
+      row.appendChild(el('div', 'cell-mono', t.type));
+      row.appendChild(el('div', 'cell-sub hide-sm', t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—')));
+      row.appendChild(el('div', 'cell-sub hide-sm', t.username || '—'));
+      const s = el('div'); s.appendChild(trunkStateChip(t)); row.appendChild(s);
+      const act = el('div', 'row-actions');
+      const edit = el('button', 'cc-btn', 'Edit'); edit.onclick = () => openTrunk(t); act.appendChild(edit);
+      const del = el('button', 'cc-btn danger', 'Delete'); del.onclick = () => delTrunk(t); act.appendChild(del);
+      row.appendChild(act);
+      tr.appendChild(row);
+    });
+  }
+  PBX.onSnapshot(render);
+
+  function applyTrunkType() {
+    const type = $('trunk-type').value;
+    document.querySelectorAll('.reg-field').forEach(f => f.classList.toggle('hidden', type !== 'register'));
+    document.querySelectorAll('.ip-field').forEach(f => f.classList.toggle('hidden', type !== 'ip'));
+  }
+  function openTrunk(t) {
+    $('trunk-modal-title').textContent = t ? 'Edit trunk' : 'Add trunk';
+    $('trunk-id').value = t ? t.id : '';
+    $('trunk-name').value = t ? (t.name || '') : '';
+    $('trunk-type').value = t ? (t.type || 'register') : 'register';
+    $('trunk-registrar').value = t ? (t.registrar_uri || '') : '';
+    $('trunk-aor').value = t ? (t.aor || '') : '';
+    $('trunk-username').value = t ? (t.username || '') : '';
+    $('trunk-password').value = '';
+    $('trunk-expires').value = t && t.expires ? t.expires : '';
+    $('trunk-peer').value = t ? (t.peer_uri || '') : '';
+    $('trunk-peerips').value = t && t.peer_ips ? t.peer_ips.join(', ') : '';
+    $('trunk-err').textContent = '';
+    applyTrunkType();
+    $('trunk-modal').hidden = false;
+    $('trunk-name').focus();
+  }
+  function closeTrunk() { $('trunk-modal').hidden = true; }
+  async function saveTrunk() {
+    const id = $('trunk-id').value;
+    const type = $('trunk-type').value;
+    const body = { name: $('trunk-name').value.trim(), type };
+    if (!body.name) { $('trunk-err').textContent = 'Name is required.'; return; }
+    if (type === 'register') {
+      body.registrar_uri = $('trunk-registrar').value.trim();
+      body.aor = $('trunk-aor').value.trim();
+      body.username = $('trunk-username').value.trim();
+      body.password = $('trunk-password').value;
+      const exp = parseInt($('trunk-expires').value, 10); if (!isNaN(exp)) body.expires = exp;
+    } else {
+      body.peer_uri = $('trunk-peer').value.trim();
+      body.peer_ips = $('trunk-peerips').value.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? ('/api/trunks/' + encodeURIComponent(id)) : '/api/trunks';
+    const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { $('trunk-err').textContent = 'Save failed (' + r.status + ').'; return; }
+    closeTrunk();
+  }
+  async function delTrunk(t) {
+    if (!confirm('Delete trunk ' + t.name + '?')) return;
+    await fetch('/api/trunks/' + encodeURIComponent(t.id), { method: 'DELETE' });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    $('add-trunk').onclick = () => openTrunk(null);
+    $('trunk-modal-close').onclick = closeTrunk;
+    $('trunk-save').onclick = saveTrunk;
+    $('trunk-type').onchange = applyTrunkType;
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTrunk(); });
+    $('trunk-modal').addEventListener('click', e => { if (e.target === $('trunk-modal')) closeTrunk(); });
+  });
+})();
+</script>
+{{end}}

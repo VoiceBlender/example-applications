@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create workspace · PBX</title>
+<style>
+:root{
+  --bg:#0a0d12; --bg-2:#131820; --border:#262d3c; --border-bright:#3a4358;
+  --fg:#e6ebf3; --fg-dim:#8a93a3; --fg-mute:#565d6e; --amber:#ffa940; --amber-dim:#b97920; --cyan:#5ec8e8; --red:#ff5d6c;
+  --font-sans:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0;min-height:100vh;}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-sans); display:grid; place-items:center; padding:20px;}
+.card{width:min(420px,92vw); border:1px solid var(--border-bright); background:var(--bg-2); padding:28px; box-shadow:0 24px 60px rgba(0,0,0,0.4);}
+.brand{display:flex; align-items:center; gap:12px; margin-bottom:22px;}
+.brand-mark{width:26px; height:26px; display:grid; place-items:center; border:1px solid var(--amber-dim); background:rgba(255,169,64,0.06);}
+.brand-name{font-size:12px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase;}
+.brand-sub{font-family:var(--font-mono); font-size:10px; color:var(--fg-mute); letter-spacing:0.1em; text-transform:uppercase; margin-top:1px;}
+h1{font-family:var(--font-mono); font-size:11px; letter-spacing:0.22em; text-transform:uppercase; margin:0 0 18px;}
+label{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
+.field{margin-bottom:14px;}
+.hint{font-family:var(--font-mono); font-size:10px; color:var(--fg-mute); margin-top:4px;}
+input{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg); padding:11px 12px; font-family:var(--font-mono); font-size:14px; outline:none; transition:border-color 160ms;}
+input:focus{border-color:var(--amber);}
+button{margin-top:8px; width:100%; background:transparent; border:1px solid var(--amber); color:var(--amber); padding:11px 12px; font-family:var(--font-mono); font-size:11px; letter-spacing:0.18em; text-transform:uppercase; cursor:pointer; transition:all 160ms;}
+button:hover{background:var(--amber); color:var(--bg);}
+.error{margin-bottom:14px; padding:10px 12px; border:1px solid var(--red); color:var(--red); font-family:var(--font-mono); font-size:11px;}
+.alt{margin-top:16px; text-align:center; font-family:var(--font-mono); font-size:11px; color:var(--fg-mute);}
+.alt a{color:var(--cyan); text-decoration:none;}
+.alt a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+<form class="card" method="POST" action="/signup">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <rect x="0" y="5" width="2" height="4" fill="var(--amber)"/>
+        <rect x="4" y="2" width="2" height="10" fill="var(--amber)"/>
+        <rect x="8" y="0" width="2" height="14" fill="var(--amber)"/>
+        <rect x="12" y="4" width="2" height="6" fill="var(--amber)"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">VoiceBlender PBX</div>
+      <div class="brand-sub">create workspace</div>
+    </div>
+  </div>
+  <h1>Create a workspace</h1>
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+  <div class="field">
+    <label for="company">Company / workspace name</label>
+    <input id="company" name="company" type="text" autofocus required>
+    <div class="hint">Becomes your tenant id (a slug). Extension SIP usernames are prefixed with it.</div>
+  </div>
+  <div class="field">
+    <label for="username">Admin username</label>
+    <input id="username" name="username" type="text" autocomplete="username" required>
+  </div>
+  <div class="field">
+    <label for="password">Admin password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required>
+  </div>
+  <button type="submit">Create workspace</button>
+  <div class="alt">Already have an account? <a href="/login">Sign in</a></div>
+</form>
+</body>
+</html>
