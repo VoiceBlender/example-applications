@@ -2,6 +2,9 @@
 
 A small SIP **PBX** built on VoiceBlender and the [voiceblender-go](../../../voiceblender-go) SDK. One binary, one VSI WebSocket, a Redis-backed config store, and a web management console themed like the [contact-centre](../contact-centre/) example.
 
+![Management console — Extensions](img/extensions.png)
+*The multi-tenant management console: extensions with their SIP device/source and live WebRTC-softphone presence.*
+
 ## What it does
 
 | Capability | How |
@@ -33,6 +36,9 @@ The PBX is **multi-tenant**: each tenant is an isolated workspace with its own e
 
 ## WebRTC softphones
 
+![Browser softphone](img/web_phone.png)
+*The browser softphone: dial pad, recent-calls list (with per-entry remove) and contacts, microphone selector, and DND.*
+
 A softphone is a browser "virtual device" for an extension. In the console's **Extensions** page, add one or more **WebRTC accounts** to an extension (each is a `username` / `password` / `label`). Someone opens `/phone/login`, signs in with those credentials, and gets a browser phone (mic + `<audio>` sink) that:
 
 - **Rings alongside the SIP phone.** When the extension is dialed — from another extension, a dial-plan `ext` node, or the IVR — every registered SIP contact **and** every signed-in WebRTC device rings at once (a *fork*); the first to answer wins and the rest stop.
@@ -48,6 +54,9 @@ The management console is split into pages behind a shared top nav — **Live ca
 **Per-extension codecs.** Each extension can specify an ordered codec preference list (e.g. `opus, PCMA, PCMU`) in the console. When a call rings that extension, the outbound INVITE offers exactly those codecs in that priority order (`CreateLegRequest.Codecs`); blank means the server/global default. (This is distinct from `ANSWER_CODECS`, which is the answer-codec order for inbound trunk calls landing in the IVR/dial plan.)
 
 ## Inbound dial plan (visual flow editor)
+
+![Inbound dial plan editor](img/diaplan.png)
+*The visual dial-plan editor: a graph routing inbound calls through answer/gather/TTS to `ext`, `forward`, and IVR nodes.*
 
 The server hands every inbound INVITE to the app to decide, so inbound-call routing is entirely app-defined. The **Inbound dial plan** board in the console is a visual node/flow editor: inbound trunk calls walk the graph from the `start` node.
 
