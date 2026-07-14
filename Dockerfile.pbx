@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1.7
+#
+# Docker build for the VoiceBlender PBX example. Self-contained: the build
+# context is this directory, and the SDK is pulled from the public Go module
+# proxy. The web console and softphone assets are baked into the binary via
+# //go:embed, so nothing extra is copied at runtime.
+#
+#   docker build -f Dockerfile.pbx -t pbx .
+#
+# The PBX needs a Redis instance and listens on :8091. Create a workspace at
+# /signup, or seed one on startup with SEED_TENANT:
+#
+#   docker run --rm -p 8091:8091 \
+#     -e VOICEBLENDER_URL=http://host.docker.internal:8080/v1 \
+#     -e REDIS_URL=redis://host.docker.internal:6379/0 \
+#     -e SEED_TENANT=acme:Acme:admin:letmein \
+#     pbx
+
+ARG GO_VERSION=1.24
+ARG ALPINE_VERSION=3.20
+
+# ---- builder ---------------------------------------------------------------
+FROM golang:${GO_VERSION}-alpine AS builder
+
+WORKDIR /src
+
+# Pre-fetch modules in their own layer so source changes don't bust the
+# dependency cache.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Now copy the full source (cmd/pbx/web/ is embedded at build time).
+COPY . .
+
+# Static, CGO-disabled build so the binary runs on a minimal base.
+ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/pbx ./cmd/pbx
+
+# ---- runtime ---------------------------------------------------------------
+FROM alpine:${ALPINE_VERSION}
+
+# ca-certificates for any outbound TLS; tini forwards SIGTERM so the VSI
+# stream and console WebSockets disconnect cleanly on `docker stop`.
+RUN apk add --no-cache ca-certificates tini && \
+    adduser -D -u 10001 -g '' pbx
+
+WORKDIR /app
+COPY --from=builder /out/pbx /app/pbx
+RUN chown -R pbx:pbx /app
+
+USER pbx
+EXPOSE 8091
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/pbx"]

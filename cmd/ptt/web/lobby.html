@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Push-to-Talk · Rooms</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="bar">
+  <div class="brand">VoiceBlender Push-to-Talk</div>
+  <div>
+    <span class="who">{{.User}}</span>
+    <a class="logout" href="/logout">sign out</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <div class="head">Create a room</div>
+    <div class="body">
+      <div class="err" id="create-err"></div>
+      <div class="row">
+        <div class="grow">
+          <label>Room name</label>
+          <input id="room-name" placeholder="e.g. Ops channel" maxlength="60">
+        </div>
+        <div style="width:150px;">
+          <label>Visibility</label>
+          <select id="room-vis">
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+        <div style="width:230px;">
+          <label>Roger tone</label>
+          <select id="room-roger"></select>
+        </div>
+        <button class="ghost" id="roger-preview" title="Hear it">▶</button>
+        <button id="create-btn">Create</button>
+      </div>
+      <div class="hint" style="margin-top:10px;">Public rooms are open to everyone. Private rooms are reachable only via their invite link.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">Join a private room</div>
+    <div class="body">
+      <div class="err" id="join-err"></div>
+      <div class="row">
+        <div class="grow">
+          <label>Invite code</label>
+          <input id="join-code" placeholder="paste an invite code" maxlength="32">
+        </div>
+        <button id="join-btn" class="ghost">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">Rooms</div>
+    <div class="rooms" id="rooms"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<script src="/static/roger.js"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+
+  // Roger-tone picker (shared table in /static/roger.js), with a preview button.
+  Roger.fill($('room-roger'), 'classic');
+  $('roger-preview').onclick=()=>Roger.play($('room-roger').value);
+  $('room-roger').onchange=()=>Roger.play($('room-roger').value);
+
+  // ── live room list over the lobby WebSocket ─────────────────────────────
+  let ws=null, backoff=700;
+  function connect(){
+    const proto = location.protocol==='https:'?'wss://':'ws://';
+    ws=new WebSocket(proto+location.host+'/api/lobby/stream');
+    ws.onopen=()=>{ backoff=700; };
+    ws.onmessage=(m)=>{ let msg; try{ msg=JSON.parse(m.data); }catch(e){ return; }
+      if(msg.type==='lobby') render(msg.rooms||[]); };
+    ws.onclose=()=>{ setTimeout(connect, backoff); backoff=Math.min(backoff*2,8000); };
+    ws.onerror=()=>{ try{ ws.close(); }catch(e){} };
+  }
+
+  function render(rooms){
+    const box=$('rooms');
+    if(!rooms.length){ box.innerHTML='<div class="empty">No rooms yet — create one above.</div>'; return; }
+    box.innerHTML='';
+    rooms.forEach(r=>{
+      const row=document.createElement('div'); row.className='roomrow';
+      const left=document.createElement('div');
+      const name=document.createElement('div'); name.className='name'; name.textContent=r.name;
+      const meta=document.createElement('div'); meta.className='meta';
+      meta.textContent='owner '+r.owner+' · '+(r.present===1?'1 person':r.present+' people')+' present';
+      left.appendChild(name); left.appendChild(meta);
+
+      const tags=document.createElement('div');
+      if(r.visibility==='private'){ const t=document.createElement('span'); t.className='tag private'; t.textContent='private'; tags.appendChild(t); }
+      if(r.present>0){ const t=document.createElement('span'); t.className='tag live'; t.textContent=r.present+' live'; t.style.marginLeft='6px'; tags.appendChild(t); }
+
+      const spacer=document.createElement('div'); spacer.className='spacer';
+      const enter=document.createElement('button'); enter.textContent='Enter';
+      enter.onclick=()=>{ location.href='/room/'+r.id; };
+
+      row.appendChild(left); row.appendChild(tags); row.appendChild(spacer); row.appendChild(enter);
+      if(r.owned){
+        const del=document.createElement('button'); del.className='danger'; del.textContent='Delete'; del.style.marginLeft='8px';
+        del.onclick=async()=>{ if(!confirm('Delete "'+r.name+'"?')) return;
+          await fetch('/api/rooms/'+r.id,{method:'DELETE'}); };
+        row.appendChild(del);
+      }
+      box.appendChild(row);
+    });
+  }
+
+  // ── create / join ───────────────────────────────────────────────────────
+  $('create-btn').onclick=async()=>{
+    $('create-err').textContent='';
+    const name=$('room-name').value.trim();
+    if(!name){ $('create-err').textContent='Enter a room name.'; return; }
+    const res=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, visibility:$('room-vis').value, roger:$('room-roger').value})});
+    if(!res.ok){ $('create-err').textContent='Could not create room.'; return; }
+    const j=await res.json(); location.href='/room/'+j.id;
+  };
+  $('join-btn').onclick=async()=>{
+    $('join-err').textContent='';
+    const code=$('join-code').value.trim();
+    if(!code){ $('join-err').textContent='Enter an invite code.'; return; }
+    const res=await fetch('/api/rooms/join',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({code})});
+    if(!res.ok){ $('join-err').textContent='Invalid invite code.'; return; }
+    const j=await res.json(); location.href='/room/'+j.id;
+  };
+  $('room-name').addEventListener('keydown',e=>{ if(e.key==='Enter') $('create-btn').click(); });
+  $('join-code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('join-btn').click(); });
+
+  connect();
+})();
+</script>
+</body>
+</html>

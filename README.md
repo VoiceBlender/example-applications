@@ -9,6 +9,7 @@ Reference applications built on [VoiceBlender](../VoiceBlender) using the [voice
 | [contact-centre](./cmd/contact-centre/) | Complete inbound SIP contact centre in one binary. UK ringback → welcome TTS → per-caller waiting room with hold music and live queue-position announcements → one-click *Take call* on the agent dashboard → bridge with mute/hold/resume/hangup → live per-speaker transcription archived into the call log. Supervisor dashboard adds silent monitor (*Listen*), private side-channel (*Whisper*), and a rolling Service KPIs board (SL, ASA, AHT, Abandon, Longest Wait). Pluggable call-log backend (memory / Redis), optional static-password auth, configurable codec preference order. |
 | [ivr](./cmd/ivr/) | Multi-department IVR. UK ringback → welcome TTS → DTMF main menu → routes the caller into a department room (sales / support / billing) with looping hold music and a repeating hold message, or hands off to a Deepgram AI voice agent on `0`. |
 | [pbx](./cmd/pbx/) | **Multi-tenant SIP PBX** in one binary. Authenticated extensions (REGISTER + INVITE digest), register/IP trunks, extension↔extension and extension→external calls, a dial-by-extension IVR, and a **visual inbound dial-plan editor** (match / gather DTMF+speech / ext / ivr / forward / play / TTS / reject). **Browser WebRTC softphones** act as extra devices per extension — ring alongside the SIP phone, place calls, hold / blind-transfer (incl. "to my desk phone") / DND / mic-selector / ringtone / call-history + contacts. Handles inbound SIP REFER (accept → re-bridge), self-service tenant signup with a cross-tenant superadmin console, on-hold music, and Redis-persisted config/sessions. |
+| [ptt](./cmd/ptt/) | **Browser push-to-talk** (walkie-talkie). Username-only login → create public or private rooms → hold a button (or Space) to talk over WebRTC. **Single-speaker floor control** (a second presser gets "busy") and **fully on-demand media**: the VoiceBlender room and every WebRTC leg are created on the press and torn down on the release, so nothing is allocated while a room is quiet. Private rooms use a shareable invite code/link; live presence + "who's talking"; Redis-persisted users/sessions/rooms. |
 
 ## Layout
 
@@ -31,13 +32,16 @@ See each app's own README for required configuration and prerequisites.
 
 ## Docker
 
-A multi-stage [`Dockerfile`](./Dockerfile) builds every binary under `cmd/` in one go. The build context is just this directory — the SDK is pulled from the public Go module proxy, no workspace layout required:
+Each example has its own multi-stage Dockerfile that produces a single self-contained image. The build context is just this directory — the SDK is pulled from the public Go module proxy, no workspace layout required. Every image is Alpine-based, statically links the binary (`CGO_ENABLED=0`), runs as a non-root user, and uses `tini` for clean signal handling.
 
-```bash
-docker build -t cc-example .
-```
-
-The resulting image is Alpine-based, statically links the binaries (`CGO_ENABLED=0`), runs as a non-root user, and uses `tini` for clean signal handling. It defaults to running `contact-centre`; override with `docker run cc-example /app/<other-binary>` once additional commands exist under `cmd/`.
+- **contact-centre** — [`Dockerfile`](./Dockerfile) (listens on `:8090`):
+  ```bash
+  docker build -t cc-example .
+  ```
+- **pbx** — [`Dockerfile.pbx`](./Dockerfile.pbx) (needs Redis; listens on `:8091`):
+  ```bash
+  docker build -f Dockerfile.pbx -t pbx .
+  ```
 
 Typical run:
 

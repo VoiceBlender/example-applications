@@ -67,6 +67,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,6 +114,36 @@ type app struct {
 
 	auth     authConfig
 	sessions *sessionStore
+
+	// appID tags everything this app creates on VoiceBlender (rooms, agent and
+	// supervisor WebRTC legs) and scopes the events it subscribes to, so several
+	// examples can share one VoiceBlender instance. appStrict decides whether
+	// untagged inbound calls are accepted — see appFilter.
+	appID     string
+	appStrict bool
+}
+
+// appFilter is the VSI app_id regex this app subscribes with.
+//
+// Everything the contact centre *creates* — waiting rooms, consult and intercom
+// rooms, agent and supervisor WebRTC legs — is tagged with app_id, so it always
+// matches. Inbound SIP calls are the exception: VoiceBlender creates those legs,
+// and the only way one carries an app_id is if the INVITE arrives with an
+// `X-App-ID` header. A call without it is unattributed (empty app_id).
+//
+// So by default the filter *also* accepts the empty app_id. A strict `^id$`
+// filter would drop every ordinary inbound call and the contact centre would
+// never ring — the one bug that would matter most here.
+//
+// If your SIP provider or SBC stamps `X-App-ID: <APP_ID>` on the calls meant for
+// this app, set APP_ID_STRICT=1: the filter then accepts only tagged events,
+// which fully isolates it from other examples' inbound calls too.
+func (a *app) appFilter() string {
+	id := regexp.QuoteMeta(a.appID)
+	if a.appStrict {
+		return "^" + id + "$"
+	}
+	return "^(?:" + id + ")?$"
 }
 
 // defaultCallRoomMatrix returns the role-routing matrix applied to every
@@ -165,6 +196,8 @@ func main() {
 	a := &app{
 		client:          voiceblender.New(voiceblender.WithBaseURL(baseURL)),
 		log:             log,
+		appID:           envOr("APP_ID", "contact-centre"),
+		appStrict:       boolEnv("APP_ID_STRICT"),
 		holdMusicURL:    holdMusicURL,
 		announceEvery:   interval,
 		ttsVoice:        envOr("TTS_VOICE", "Rachel"),
@@ -203,9 +236,11 @@ func main() {
 
 	go a.serveHTTP(ctx, listenAddr)
 
-	// Pump VSI events into the client's event hub.
+	// Pump VSI events into the client's event hub. Several examples can share one
+	// VoiceBlender, so ask the server to send only the events that concern us.
+	log.Info("VSI app filter", "app_id", a.appID, "filter", a.appFilter(), "strict", a.appStrict)
 	go func() {
-		if err := a.client.RunEventStream(ctx); err != nil && ctx.Err() == nil {
+		if err := a.client.RunEventStream(ctx, voiceblender.WithAppFilter(a.appFilter())); err != nil && ctx.Err() == nil {
 			log.Error("event stream", "error", err)
 			cancel()
 		}
@@ -382,7 +417,7 @@ func (a *app) handle(ctx context.Context, ring *voiceblender.LegRingingEvent, an
 	roomID := "waiting-" + leg.ID
 
 	log.Info("cmd", "action", "create_room", "room", roomID)
-	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID}); err != nil && !voiceblender.IsConflict(err) {
+	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID, AppID: a.appID}); err != nil && !voiceblender.IsConflict(err) {
 		log.Error("create room", "room", roomID, "error", err)
 		return
 	}
@@ -1093,7 +1128,7 @@ func (a *app) handleSupervisorOffer(ctx context.Context, sess *supervisorSession
 		sendOrDrop(outbox, map[string]any{"type": "webrtc.error", "message": "sdp required"})
 		return
 	}
-	resp, err := a.client.WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp})
+	resp, err := a.client.WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp, AppID: a.appID})
 	if err != nil {
 		log.Error("supervisor webrtc offer", "error", err)
 		sendOrDrop(outbox, map[string]any{"type": "webrtc.error", "message": "offer failed"})
@@ -1699,7 +1734,7 @@ func (a *app) handleAgentOffer(ctx context.Context, ag *agent, sdp string, outbo
 		sendOrDrop(outbox, map[string]any{"type": "webrtc.error", "message": "sdp required"})
 		return
 	}
-	resp, err := a.client.WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp})
+	resp, err := a.client.WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp, AppID: a.appID})
 	if err != nil {
 		log.Error("webrtc offer", "error", err)
 		sendOrDrop(outbox, map[string]any{"type": "webrtc.error", "message": "offer failed"})
@@ -1795,6 +1830,15 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// boolEnv reports whether an env var is set to a truthy value. Unset is false.
+func boolEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // parseDurationOr reads a duration from env, falling back to def with a

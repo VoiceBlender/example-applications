@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
-# Multi-stage Docker build for the VoiceBlender example applications.
-# Self-contained: the build context is this directory, and the SDK is
-# pulled from the public Go module proxy.
+# Docker build for the VoiceBlender contact-centre example.
+# Self-contained: the build context is this directory, and the SDK is pulled
+# from the public Go module proxy. Each example has its own Dockerfile — see
+# Dockerfile.pbx for the PBX.
 #
-#   docker build -t cc-example .
+#   docker build -t contact-centre .
 #
 # Run:
 #
@@ -12,11 +13,7 @@
 #     -e VOICEBLENDER_URL=http://host.docker.internal:8080/v1 \
 #     -e SUPERVISOR_PASSWORD=letmein \
 #     -e AGENT_PASSWORD=letmein \
-#     cc-example
-#
-# Run a different binary (once more land under cmd/):
-#
-#   docker run --rm cc-example /app/<other-binary>
+#     contact-centre
 
 ARG GO_VERSION=1.24
 ARG ALPINE_VERSION=3.20
@@ -36,17 +33,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 
 # Static, CGO-disabled build so the binary runs on a minimal base.
-# Builds every command under cmd/, so adding a new example is just
-# `mkdir cmd/<name>/ && rebuild` — no Dockerfile edit needed.
 ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    mkdir -p /out && \
-    for cmd in cmd/*/; do \
-        name=$(basename "$cmd"); \
-        echo "==> building $name"; \
-        go build -ldflags="-s -w" -o "/out/$name" "./$cmd"; \
-    done
+    go build -ldflags="-s -w" -o /out/contact-centre ./cmd/contact-centre
 
 # ---- runtime ---------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION}
@@ -61,14 +51,13 @@ RUN apk add --no-cache ca-certificates tini && \
 # The binary references `cmd/contact-centre/assets/` relatively. Layout
 # WORKDIR + COPY so that path resolves under the runtime root.
 WORKDIR /app
-COPY --from=builder /out/ /app/
+COPY --from=builder /out/contact-centre /app/contact-centre
 COPY cmd/contact-centre/assets/ /app/cmd/contact-centre/assets/
 RUN chown -R cc:cc /app
 
 USER cc
 EXPOSE 8090
 
-# tini reaps zombies and forwards signals. The default command runs
-# the contact-centre; override to launch another example binary.
+# tini reaps zombies and forwards signals.
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["/app/contact-centre"]

@@ -25,6 +25,9 @@ cmd/*/contact-centre
 cover.out
 coverage.txt
 
-# Docker itself.
-Dockerfile
+# Doc-only assets (README screenshots) — not needed to build any binary.
+cmd/*/img/
+
+# Docker itself (root Dockerfile + per-app Dockerfile.<name>).
+Dockerfile*
 .dockerignore

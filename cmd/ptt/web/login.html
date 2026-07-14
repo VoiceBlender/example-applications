@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Push-to-Talk · Sign in</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+body{display:grid; place-items:center; padding:20px;}
+.card{width:min(380px,94vw);}
+.card .head{padding:18px 22px;}
+.title{font-family:var(--font-mono); font-size:12px; letter-spacing:0.2em; text-transform:uppercase;}
+.sub{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); margin-top:4px;}
+.card .body{padding:22px;}
+button{width:100%; margin-top:6px;}
+</style>
+</head>
+<body>
+<form class="card" method="post" action="/login">
+  <div class="head">
+    <div class="title">VoiceBlender Push-to-Talk</div>
+    <div class="sub">pick a username to get started</div>
+  </div>
+  <div class="body">
+    <div class="err">{{.Error}}</div>
+    <input type="hidden" name="next" value="{{.Next}}">
+    <div style="margin-bottom:14px;">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" autofocus
+        placeholder="e.g. alice" maxlength="24">
+    </div>
+    <button type="submit">Enter</button>
+  </div>
+</form>
+</body>
+</html>

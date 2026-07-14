@@ -1,0 +1,229 @@
+:root{
+  --bg:#0a0d12; --bg-2:#131820; --bg-3:#1a212c; --border:#262d3c; --border-bright:#3a4358;
+  --fg:#e6ebf3; --fg-dim:#8a93a3; --fg-mute:#565d6e;
+  --amber:#ffa940; --red:#ff5d6c; --green:#3ddc84; --blue:#5b9dff;
+  --font-sans:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+  --font-mono:ui-monospace,'SF Mono',Menlo,monospace;
+
+  /* Instrument panel (room page). Extends the tokens above rather than
+     replacing them, so lobby → room stays one product. */
+  --panel:#171c24;        /* panel face, lifted off --bg */
+  --panel-edge:#0d1116;   /* recessed wells */
+  --panel-rule:#2b3444;   /* bay dividers */
+  --lcd-bg:#14100a;       /* warm dark readout glass */
+  --lcd-ink:#ffb454;      /* lit segments (amber phosphor) */
+  --lcd-dim:rgba(255,180,84,0.14); /* unlit segments — always faintly there */
+}
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0;min-height:100vh;}
+body{background:var(--bg); color:var(--fg); font-family:var(--font-sans);}
+a{color:var(--blue); text-decoration:none;}
+a:hover{text-decoration:underline;}
+
+.mono{font-family:var(--font-mono);}
+.dim{color:var(--fg-dim);}
+.mute{color:var(--fg-mute);}
+.hidden{display:none !important;}
+
+/* ── top bar ─────────────────────────────────────────── */
+.bar{display:flex; align-items:center; justify-content:space-between;
+  padding:14px 22px; border-bottom:1px solid var(--border); background:var(--bg-2);}
+.bar .brand{font-family:var(--font-mono); font-size:12px; letter-spacing:0.2em; text-transform:uppercase;}
+.bar .who{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute);}
+.bar a.logout{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); margin-left:14px;}
+
+.wrap{max-width:900px; margin:0 auto; padding:24px 22px 60px;}
+
+/* ── labels / inputs / buttons ───────────────────────── */
+label{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.16em;
+  text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
+input,select{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg);
+  padding:11px 12px; font-family:var(--font-mono); font-size:14px; outline:none;}
+input:focus,select:focus{border-color:var(--amber);}
+button{font-family:var(--font-mono); font-size:11px; letter-spacing:0.18em; text-transform:uppercase;
+  background:transparent; border:1px solid var(--amber); color:var(--amber); padding:11px 16px;
+  cursor:pointer; transition:all 160ms;}
+button:hover{background:var(--amber); color:var(--bg);}
+button:disabled{opacity:0.4; cursor:not-allowed;}
+button.ghost{border-color:var(--border-bright); color:var(--fg-dim);}
+button.ghost:hover{background:var(--bg-3); color:var(--fg);}
+button.danger{border-color:var(--red); color:var(--red);}
+button.danger:hover{background:var(--red); color:var(--bg);}
+
+/* ── cards / sections ────────────────────────────────── */
+.card{border:1px solid var(--border); background:var(--bg-2); margin-bottom:20px;}
+.card .head{padding:14px 18px; border-bottom:1px solid var(--border);
+  font-family:var(--font-mono); font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:var(--fg-dim);}
+.card .body{padding:18px;}
+.row{display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;}
+.row .grow{flex:1 1 180px;}
+
+/* ── lobby room list ─────────────────────────────────── */
+.rooms{display:flex; flex-direction:column;}
+.roomrow{display:flex; align-items:center; gap:14px; padding:14px 18px; border-bottom:1px solid var(--border);}
+.roomrow:last-child{border-bottom:none;}
+.roomrow .name{font-size:15px; font-weight:600;}
+.roomrow .meta{font-family:var(--font-mono); font-size:11px; color:var(--fg-mute); margin-top:3px;}
+.roomrow .spacer{flex:1;}
+.tag{font-family:var(--font-mono); font-size:10px; letter-spacing:0.12em; text-transform:uppercase;
+  padding:3px 8px; border:1px solid var(--border-bright); color:var(--fg-dim);}
+.tag.private{color:var(--amber); border-color:var(--amber);}
+.tag.live{color:var(--green); border-color:var(--green);}
+.empty{padding:24px 18px; color:var(--fg-mute); font-family:var(--font-mono); font-size:12px;}
+
+/* ══ INSTRUMENT PANEL (room page) ═════════════════════════════════════════
+   A piece of radio equipment: bays stacked behind one face, a recessed amber
+   readout, and a signal meter whose unlit segments are always faintly there. */
+
+.panel{max-width:600px; margin:26px auto 60px; background:var(--panel);
+  border:1px solid var(--border-bright); border-radius:6px;
+  box-shadow:0 1px 0 rgba(255,255,255,0.05) inset, 0 24px 60px rgba(0,0,0,0.5);}
+.bay{padding:16px 20px; border-bottom:1px solid var(--panel-rule);}
+.bay:last-child{border-bottom:none;}
+.bay-head{font-family:var(--font-mono); font-size:9px; letter-spacing:0.22em;
+  text-transform:uppercase; color:var(--fg-mute); margin-bottom:10px;}
+.bay-head.split{display:flex; justify-content:space-between; align-items:baseline; gap:10px;}
+.panel .empty{padding:10px; background:var(--panel-edge); border-radius:3px;}
+/* The signed-in callsign reads as a value, not a silkscreen label. */
+.callsign{text-transform:none; letter-spacing:0.06em; color:var(--fg-dim);}
+/* Let the roger picker size to its longest option instead of truncating it. */
+.panel .row select{flex:1; min-width:0;}
+
+/* Silkscreen header: back-link + status lamps. */
+.bay.head-bay{display:flex; align-items:center; justify-content:space-between; gap:14px;
+  background:linear-gradient(180deg, rgba(255,255,255,0.03), transparent);}
+.panel-back{font-family:var(--font-mono); font-size:10px; letter-spacing:0.2em;
+  text-transform:uppercase; color:var(--fg-dim);}
+.panel-back:hover{color:var(--fg); text-decoration:none;}
+.lamps{display:flex; gap:14px; align-items:center;}
+.lampset{display:flex; align-items:center; gap:6px; font-family:var(--font-mono);
+  font-size:9px; letter-spacing:0.18em; text-transform:uppercase; color:var(--fg-mute);}
+.lamp{width:9px; height:9px; border-radius:50%; background:#232a35;
+  box-shadow:0 0 0 1px rgba(0,0,0,0.6) inset; transition:all 140ms;}
+.lamp.on.pwr{background:var(--amber); box-shadow:0 0 8px var(--amber);}
+.lamp.on.tx{background:var(--red); box-shadow:0 0 10px var(--red);}
+.lamp.on.rx{background:var(--green); box-shadow:0 0 10px var(--green);}
+.lampset.on{color:var(--fg-dim);}
+
+/* The readout: a recessed amber display, not a text block. */
+.readout-bay{display:flex; gap:14px; align-items:center;}
+.readout{flex:1; position:relative; overflow:hidden; background:var(--lcd-bg);
+  border:1px solid #000; border-radius:3px; padding:14px 16px;
+  box-shadow:0 2px 10px rgba(0,0,0,0.6) inset;}
+/* Scanlines — sells it as a display rather than styled text. */
+.readout::after{content:""; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(180deg, rgba(0,0,0,0.22) 0 1px, transparent 1px 3px);}
+.readout .chan{font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em;
+  text-transform:uppercase; color:var(--lcd-ink); opacity:0.6; margin-bottom:6px;
+  display:flex; justify-content:space-between; gap:10px;}
+.readout .who{font-family:var(--font-mono); font-size:26px; font-weight:600; line-height:1.1;
+  letter-spacing:0.02em; text-transform:uppercase; color:var(--lcd-ink);
+  text-shadow:0 0 14px rgba(255,180,84,0.35); word-break:break-word;}
+.readout .who.idle{color:var(--lcd-dim); text-shadow:none;}
+.status{font-family:var(--font-mono); font-size:11px; min-height:15px; margin-top:4px;
+  color:var(--lcd-ink); opacity:0.75;}
+.status .talk{color:var(--green); opacity:1;}
+.status .other{color:var(--lcd-ink); opacity:1;}
+
+/* TX / RX / STANDBY chip beside the readout. */
+.chip{display:grid; place-items:center; flex:none; width:64px; padding:16px 0;
+  border:1px solid var(--panel-rule); border-radius:3px; background:var(--panel-edge);
+  font-family:var(--font-mono); font-size:11px; letter-spacing:0.16em; text-transform:uppercase;
+  color:var(--fg-mute); transition:all 140ms;}
+.chip.tx{border-color:var(--red); color:var(--red); box-shadow:0 0 16px rgba(255,93,108,0.2) inset;}
+.chip.rx{border-color:var(--green); color:var(--green); box-shadow:0 0 16px rgba(61,220,132,0.2) inset;}
+
+/* Signal meter — every segment is always faintly there; audio lights them. */
+.meter-bay{display:flex; align-items:center; gap:14px;}
+.meter{flex:1; display:flex; gap:3px; height:16px; padding:3px; border-radius:3px;
+  background:var(--panel-edge); box-shadow:0 1px 6px rgba(0,0,0,0.5) inset;}
+.seg{flex:1; border-radius:1px; background:var(--lcd-dim); transition:background 60ms linear;}
+.seg.on{background:var(--lcd-ink); box-shadow:0 0 6px rgba(255,180,84,0.6);}
+/* Peak segments run hot, like a real meter. */
+.seg:nth-child(n+14).on{background:var(--red); box-shadow:0 0 6px var(--red);}
+.meter-count{font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em;
+  text-transform:uppercase; color:var(--fg-mute); white-space:nowrap;}
+
+/* PTT bar — chunky, and it physically depresses. */
+.ptt-bar{display:block; width:100%; min-height:88px; padding:16px; cursor:pointer;
+  user-select:none; touch-action:none; text-transform:none; letter-spacing:normal;
+  border:1px solid var(--border-bright); border-radius:5px; color:var(--fg-dim);
+  background:linear-gradient(180deg, #262e3a, #1a212b);
+  box-shadow:0 3px 0 #0d1116, 0 6px 14px rgba(0,0,0,0.45);
+  transition:transform 60ms, box-shadow 60ms, background 140ms, color 140ms, border-color 140ms;}
+.ptt-bar .ptt-label{display:block; font-family:var(--font-mono); font-size:15px;
+  letter-spacing:0.24em; text-transform:uppercase;}
+.ptt-bar .ptt-sub{display:block; font-family:var(--font-mono); font-size:10px;
+  letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute); margin-top:7px;}
+.ptt-bar:hover{border-color:var(--fg-mute); color:var(--fg);}
+.ptt-bar:focus-visible{outline:2px solid var(--amber); outline-offset:3px;}
+.ptt-bar:active:not(:disabled), .ptt-bar.live{transform:translateY(3px); box-shadow:0 0 0 #0d1116, 0 2px 8px rgba(0,0,0,0.4);}
+.ptt-bar.live{border-color:var(--green); color:var(--green);
+  background:linear-gradient(180deg, rgba(61,220,132,0.16), rgba(61,220,132,0.06));}
+.ptt-bar.live .ptt-sub{color:var(--green); opacity:0.8;}
+.ptt-bar.busy{border-color:var(--red); color:var(--red); cursor:not-allowed;
+  background:linear-gradient(180deg, rgba(255,93,108,0.16), rgba(255,93,108,0.05));
+  transform:none; box-shadow:0 3px 0 #0d1116;}
+.ptt-bar.busy .ptt-sub{color:var(--red); opacity:0.8;}
+/* "Channel busy" is a hard stop, not a greyed-out control — override the
+   generic button:disabled dimming, which washes the red out to grey. */
+.ptt-bar:disabled{cursor:not-allowed; opacity:1;}
+
+/* Control row: CALL + owner settings. */
+.ctl-row{display:flex; gap:10px; margin-top:12px;}
+.ctl-row button{flex:1; padding:12px;}
+.hint{font-family:var(--font-mono); font-size:10px; color:var(--fg-mute); letter-spacing:0.08em;}
+
+/* Roster. */
+.people{display:flex; flex-direction:column; gap:2px;}
+.person{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:3px;
+  background:var(--panel-edge); font-family:var(--font-mono); font-size:13px; color:var(--fg-dim);}
+.person .dot{width:8px; height:8px; border-radius:50%; background:#2b3444; flex:none;}
+.person.speaking{color:var(--green); background:rgba(61,220,132,0.08);}
+.person.speaking .dot{background:var(--green); box-shadow:0 0 8px var(--green);}
+.person .me{color:var(--fg-mute); margin-left:6px;}
+
+/* Owner bays. */
+.invite{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+.invite code{font-family:var(--font-mono); font-size:14px; background:var(--panel-edge);
+  border:1px solid var(--panel-rule); padding:8px 12px; color:var(--lcd-ink); border-radius:3px;}
+.panel select{background:var(--panel-edge); border-color:var(--panel-rule);}
+
+@media (max-width:560px){
+  .panel{margin:0; border-radius:0; border-left:none; border-right:none;}
+  .readout-bay{flex-direction:column;}
+  .chip{width:100%; padding:8px;}
+  .readout .who{font-size:22px;}
+}
+
+.err{color:var(--red); font-family:var(--font-mono); font-size:11px; min-height:14px; margin-bottom:10px;}
+
+/* Ring the channel (call alert). */
+.ring-btn{border-color:var(--blue); color:var(--blue);}
+.ring-btn:hover{background:var(--blue); color:var(--bg);}
+.ring-btn:active{transform:translateY(1px);}
+
+.ringnote{border:1px solid var(--blue); color:var(--blue); background:rgba(91,157,255,0.08);
+  padding:10px; font-family:var(--font-mono); font-size:12px; letter-spacing:0.08em;
+  text-align:center; border-radius:3px; margin-top:12px;}
+.ringnote.pulse{animation:ringpulse 0.5s ease-in-out 4;}
+@keyframes ringpulse{
+  0%,100%{background:rgba(91,157,255,0.06); box-shadow:none;}
+  50%{background:rgba(91,157,255,0.28); box-shadow:0 0 24px rgba(91,157,255,0.35);}
+}
+
+/* Audio-blocked banner: browsers gate audio until a user gesture, and a pure
+   listener may never click anything — make that visible and one-click fixable. */
+.gate{display:block; width:100%; padding:11px; border-radius:3px;
+  border-color:var(--red); color:var(--red); text-transform:none; letter-spacing:0.06em; font-size:12px;}
+.gate:hover{background:var(--red); color:var(--bg);}
+
+/* Quality floor: honour a reduced-motion preference. The panel still changes
+   state — it just stops flashing and depressing. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:0.001ms !important; animation-iteration-count:1 !important;
+    transition-duration:0.001ms !important;}
+  .ringnote.pulse{animation:none; background:rgba(91,157,255,0.22);}
+  .ptt-bar:active:not(:disabled), .ptt-bar.live{transform:none;}
+  .seg{transition:none;}
+}

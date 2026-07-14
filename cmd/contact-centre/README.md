@@ -58,6 +58,40 @@ Endpoints exposed on the same HTTP server:
 
 Events arrive over **VSI** — the WebSocket Streaming Interface VoiceBlender exposes at `/vsi`. No HTTP webhook server is required.
 
+### Sharing a VoiceBlender with the other examples
+
+Several examples can point at **one** VoiceBlender, whose VSI stream carries
+everything happening on it. `APP_ID` (default `contact-centre`) keeps them apart:
+
+- **Everything this app creates is tagged** with `app_id` — the per-caller waiting
+  room, consult and intercom rooms, and the agent/supervisor browser legs
+  (`webrtc_offer`).
+- **The stream is filtered server-side** to that id, so another example's traffic
+  never reaches us.
+
+**Inbound calls are the special case, and they drive the default.** The contact
+centre doesn't *create* its calls — VoiceBlender does, when a SIP INVITE arrives.
+Such a leg only carries an `app_id` if the INVITE has an **`X-App-ID`** header, so
+an ordinary call is *unattributed* (empty `app_id`). A strict `^contact-centre$`
+filter would therefore drop every incoming call and **the phone would never ring**.
+
+So the default filter is `^(?:contact-centre)?$` — our own events *plus*
+unattributed ones:
+
+| event | `app_id` | default | `APP_ID_STRICT=1` |
+|---|---|---|---|
+| an ordinary inbound call | *(none)* | ✅ answered | ❌ ignored |
+| a call stamped `X-App-ID: contact-centre` | `contact-centre` | ✅ | ✅ |
+| our rooms / agent + supervisor legs | `contact-centre` | ✅ | ✅ |
+| another example's traffic | `ptt`, `pbx`, … | ❌ | ❌ |
+
+If your SIP provider or SBC stamps `X-App-ID` on the calls meant for this app, set
+**`APP_ID_STRICT=1`**: the app then accepts only tagged events, which also isolates
+it from other examples' *inbound* calls — the one thing the default cannot do.
+
+> Tagging browser legs requires voiceblender-go **v0.11.1** (`WebRTCOfferRequest.AppID`
+> and `WithAppFilter`).
+
 ## Prerequisites
 
 - A running [VoiceBlender] server with SIP and the VSI endpoint enabled.
