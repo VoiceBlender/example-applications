@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# Docker build for the VoiceBlender push-to-talk example. Self-contained: the
+# build context is this directory, and the SDK is pulled from the public Go
+# module proxy. The web assets are baked into the binary via //go:embed, so
+# nothing extra is copied at runtime.
+#
+#   docker build -f Dockerfile.ptt -t ptt .
+#
+# The app needs a Redis instance and listens on :8092:
+#
+#   docker run --rm -p 8092:8092 \
+#     -e VOICEBLENDER_URL=http://host.docker.internal:8080/v1 \
+#     -e REDIS_URL=redis://host.docker.internal:6379/0 \
+#     -e APP_ID=ptt \
+#     ptt
+#
+# APP_ID tags the rooms this demo creates on VoiceBlender and scopes the events
+# it acts on. Give each example a distinct value when several of them share one
+# VoiceBlender instance — see cmd/ptt/README.md.
+
+ARG GO_VERSION=1.24
+ARG ALPINE_VERSION=3.20
+
+# ---- builder ---------------------------------------------------------------
+FROM golang:${GO_VERSION}-alpine AS builder
+
+WORKDIR /src
+
+# Pre-fetch modules in their own layer so source changes don't bust the
+# dependency cache.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Now copy the full source (cmd/ptt/web/ is embedded at build time).
+COPY . .
+
+# Static, CGO-disabled build so the binary runs on a minimal base.
+ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/ptt ./cmd/ptt
+
+# ---- runtime ---------------------------------------------------------------
+FROM alpine:${ALPINE_VERSION}
+
+# ca-certificates for any outbound TLS; tini forwards SIGTERM so the VSI
+# stream and room WebSockets disconnect cleanly on `docker stop`.
+RUN apk add --no-cache ca-certificates tini && \
+    adduser -D -u 10001 -g '' ptt
+
+WORKDIR /app
+COPY --from=builder /out/ptt /app/ptt
+RUN chown -R ptt:ptt /app
+
+USER ptt
+EXPOSE 8092
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/ptt"]
