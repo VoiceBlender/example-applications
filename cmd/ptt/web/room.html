@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Push-to-Talk · {{.Name}}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<div class="panel">
+
+  <!-- Head: back to the channel list, and the status lamps that tell you what
+       the radio is doing at a glance. -->
+  <div class="bay head-bay">
+    <a class="panel-back" href="/">◂ Channels</a>
+    <div class="lamps">
+      <span class="lampset"><span class="lamp pwr" id="lamp-pwr"></span><span id="conn">connecting…</span></span>
+      <span class="lampset"><span class="lamp tx" id="lamp-tx"></span>TX</span>
+      <span class="lampset"><span class="lamp rx" id="lamp-rx"></span>RX</span>
+    </div>
+  </div>
+
+  <!-- The readout. Channel designator is the real room id, not an invented
+       channel number. aria-live so a screen reader announces who's talking. -->
+  <div class="bay">
+    <div class="readout-bay">
+      <div class="readout" aria-live="polite">
+        <div class="chan">
+          <span id="chan-id">CH</span>
+          <span>{{.Name}}</span>
+        </div>
+        <div class="who idle" id="readout-who">standby</div>
+        <div class="status" id="status">&nbsp;</div>
+      </div>
+      <div class="chip" id="state-chip">STBY</div>
+    </div>
+
+    <!-- Signal meter: driven by the real audio, not a canned animation. -->
+    <div class="meter-bay" style="margin-top:12px;">
+      <span class="meter-count">Signal</span>
+      <div class="meter" id="meter"></div>
+      <span class="meter-count" id="oncount">0 on channel</span>
+    </div>
+  </div>
+
+  <!-- Controls. -->
+  <div class="bay">
+    <button class="ptt-bar" id="ptt">
+      <span class="ptt-label" id="ptt-label">Push to talk</span>
+      <span class="ptt-sub" id="ptt-sub">hold, or press space</span>
+    </button>
+
+    <div class="ctl-row">
+      <button class="ring-btn" id="ring">🔔&nbsp;&nbsp;Call</button>
+    </div>
+
+    <!-- Browsers block audio until the page gets a user gesture. A pure listener
+         may never click anything, so make the block visible and fixable. -->
+    <button id="audio-gate" class="gate hidden" style="margin-top:12px;">🔇 Audio is blocked — click to enable</button>
+    <div id="ring-note" class="ringnote hidden"></div>
+  </div>
+
+  <!-- Roster. -->
+  <div class="bay">
+    <div class="bay-head split">
+      <span>On channel</span>
+      <span class="callsign">you are <span id="subtitle"></span></span>
+    </div>
+    <div class="people" id="people"><div class="empty">…</div></div>
+  </div>
+
+  {{if .Owner}}
+  <div class="bay">
+    <div class="bay-head">Invite</div>
+    <div class="invite">
+      <code id="invite-code">{{.Invite}}</code>
+      <button class="ghost" id="copy-code">Copy code</button>
+      <button class="ghost" id="copy-link">Copy link</button>
+      <span class="mono mute" id="copied"></span>
+    </div>
+  </div>
+
+  <div class="bay">
+    <div class="bay-head">Roger tone — played to everyone when a transmission ends</div>
+    <div class="row">
+      <select id="roger-sel"></select>
+      <button class="ghost" id="roger-test">Test</button>
+      <span class="mono mute" id="roger-saved"></span>
+    </div>
+  </div>
+  {{end}}
+
+</div>
+
+<audio id="sink" autoplay></audio>
+
+<script src="/static/roger.js"></script>
+<script src="/static/meter.js"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const ROOM = {{.RoomID}};
+  const INVITE = {{.Invite}};
+  let me='';
+  let rogerStyle = {{.Roger}};
+
+  // Channel designator, derived from the real room id — no invented numbers.
+  $('chan-id').textContent = 'CH·' + String(ROOM).slice(0,4).toUpperCase();
+  Meter.build($('meter'));
+
+  // ── signalling WebSocket ────────────────────────────────────────────────
+  let ws=null, backoff=700, hbTimer=null;
+  function send(o){ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(o)); }
+  function connect(){
+    const proto = location.protocol==='https:'?'wss://':'ws://';
+    ws=new WebSocket(proto+location.host+'/api/ptt/stream?room='+encodeURIComponent(ROOM));
+    ws.onopen=()=>{ backoff=700; $('conn').textContent='connected'; $('lamp-pwr').classList.add('on');
+      clearInterval(hbTimer); hbTimer=setInterval(()=>send({type:'ping'}), 10000); };
+    ws.onmessage=(m)=>{ let msg; try{ msg=JSON.parse(m.data); }catch(e){ return; } handle(msg); };
+    ws.onclose=()=>{ $('conn').textContent='reconnecting…'; $('lamp-pwr').classList.remove('on');
+      clearInterval(hbTimer); stopMedia(); setTimeout(connect, backoff); backoff=Math.min(backoff*2,8000); };
+    ws.onerror=()=>{ try{ ws.close(); }catch(e){} };
+  }
+
+  function handle(msg){
+    switch(msg.type){
+      case 'hello': me=msg.user||''; if(msg.roger!==undefined) setRoger(msg.roger); $('subtitle').textContent=me; break;
+      case 'config': if(msg.roger!==undefined) setRoger(msg.roger); break;
+      case 'presence': renderPeople(msg.users||[], msg.speaker||''); break;
+      case 'speaker': setSpeaker(msg.speaker!==undefined?msg.speaker:msg.user||''); break;
+      case 'floor.granted': mode='speaking'; startSpeaking(); break;
+      case 'floor.denied': flashBusy(msg.by||'someone'); break;
+      case 'floor.error': setStatus(msg.message||'channel error',''); releasePreheat(); break;
+      case 'listen.start': mode='listening'; startListening(); break;
+      case 'stop': stopMedia(); break;
+      case 'ring': onRing(msg.from||''); break;
+      case 'ring.throttled': flashNote('Hold on — you can ring again in '+(msg.wait||1)+'s'); break;
+      case 'webrtc.answer': onAnswer(msg); break;
+      case 'webrtc.candidate': onCandidate(msg.candidate); break;
+      case 'webrtc.error': setStatus('audio error',''); break;
+      case 'pong': break;
+    }
+  }
+
+  // ── PTT bar + floor ─────────────────────────────────────────────────────
+  // mode: 'idle' | 'speaking' | 'listening'
+  let mode='idle', currentSpeaker='', pressed=false;
+  const btn=$('ptt');
+
+  function pressPTT(){
+    if(pressed) return;
+    // Can't grab the floor while someone else holds it.
+    if(currentSpeaker && currentSpeaker!==me) return;
+    pressed=true;
+    preheatMic();               // pre-warm the mic so audio starts fast on grant
+    send({type:'ptt.press'});
+  }
+  function releasePTT(){
+    if(!pressed) return;
+    pressed=false;
+    send({type:'ptt.release'});
+  }
+  btn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressPTT(); });
+  btn.addEventListener('pointerup', releasePTT);
+  btn.addEventListener('pointerleave', releasePTT);
+  btn.addEventListener('pointercancel', releasePTT);
+  window.addEventListener('keydown', e=>{ if(e.code==='Space' && !e.repeat && e.target.tagName!=='INPUT'){ e.preventDefault(); pressPTT(); } });
+  window.addEventListener('keyup', e=>{ if(e.code==='Space'){ e.preventDefault(); releasePTT(); } });
+
+  function setSpeaker(user){
+    const prev=currentSpeaker;
+    currentSpeaker=user||'';
+    // A transmission just ended (someone → nobody): play the roger tone.
+    if(prev && !currentSpeaker) playRoger();
+    updateButton();
+    if(!currentSpeaker){ if(mode!=='speaking') setStatus('channel clear',''); }
+    else if(currentSpeaker===me){ /* status set by startSpeaking */ }
+    else setStatus(currentSpeaker+' is talking','other');
+    // refresh the speaking highlight in the roster
+    markSpeaking(currentSpeaker);
+  }
+
+  // updateButton drives every state surface at once: the PTT bar, the readout
+  // callsign, the TX/RX chip and the lamps. It writes into the bar's label spans
+  // rather than its textContent, which would wipe them out.
+  function updateButton(){
+    btn.classList.remove('live','busy');
+    const who=$('readout-who'), chip=$('state-chip');
+    chip.classList.remove('tx','rx');
+    $('lamp-tx').classList.remove('on');
+    $('lamp-rx').classList.remove('on');
+
+    if(currentSpeaker && currentSpeaker===me){          // transmitting
+      btn.classList.add('live'); btn.disabled=false;
+      $('ptt-label').textContent='On air';
+      $('ptt-sub').textContent='release to stop';
+      who.textContent=me; who.classList.remove('idle');
+      chip.textContent='TX'; chip.classList.add('tx');
+      $('lamp-tx').classList.add('on');
+    } else if(currentSpeaker){                          // receiving
+      btn.classList.add('busy'); btn.disabled=true;
+      $('ptt-label').textContent='Channel busy';
+      $('ptt-sub').textContent=currentSpeaker+' is talking';
+      who.textContent=currentSpeaker; who.classList.remove('idle');
+      chip.textContent='RX'; chip.classList.add('rx');
+      $('lamp-rx').classList.add('on');
+    } else {                                            // standby
+      btn.disabled=false;
+      $('ptt-label').textContent='Push to talk';
+      $('ptt-sub').textContent='hold, or press space';
+      who.textContent='standby'; who.classList.add('idle');
+      chip.textContent='STBY';
+    }
+  }
+  function flashBusy(by){ setStatus(by+' has the floor','other'); }
+  function setStatus(text, kind){
+    const s=$('status'); s.innerHTML=''; const span=document.createElement('span');
+    if(kind) span.className=kind; span.textContent=text; s.appendChild(span);
+  }
+
+  // ── WebRTC (on-demand: one peer connection per talk burst) ───────────────
+  let pc=null, micStream=null, preheating=null, legID='';
+  function newPC(){
+    const p=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    // Incoming speech. If the browser blocks playback (no user gesture yet),
+    // say so instead of leaving the listener silently deaf.
+    p.ontrack=(ev)=>{
+      const sink=$('sink'); sink.srcObject=ev.streams[0];
+      const pr=sink.play(); if(pr&&pr.catch) pr.catch(()=>showGate());
+      // Meter the incoming voice — but while transmitting the meter shows our
+      // own mic instead (see startSpeaking).
+      if(mode!=='speaking') Meter.attach(ev.streams[0]);
+    };
+    p.onicecandidate=(ev)=>{ if(ev.candidate) send({type:'webrtc.candidate', candidate:ev.candidate.toJSON()}); };
+    p.onconnectionstatechange=()=>{
+      if(!pc) return;
+      if(pc.connectionState==='connected' && mode==='speaking'){ setStatus('you are live','talk'); beep(); }
+      else if(pc.connectionState==='failed'){ setStatus('audio failed',''); }
+    };
+    return p;
+  }
+  async function offer(){
+    try{
+      const o=await pc.createOffer();
+      await pc.setLocalDescription(o);
+      send({type:'webrtc.offer', sdp:pc.localDescription.sdp});
+    }catch(e){ setStatus('offer error',''); }
+  }
+  function preheatMic(){
+    if(micStream||preheating) return;
+    preheating = navigator.mediaDevices.getUserMedia({audio:true})
+      .then(s=>{ micStream=s; preheating=null; return s; })
+      .catch(()=>{ preheating=null; setStatus('microphone denied',''); });
+  }
+  function releasePreheat(){
+    if(mode!=='speaking' && micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  }
+  async function ensureMic(){
+    if(micStream) return micStream;
+    if(preheating) return await preheating;
+    preheatMic(); return await preheating;
+  }
+  async function startSpeaking(){
+    setStatus('opening channel…','talk');
+    pc=newPC();
+    const s=await ensureMic();
+    if(!s){ return; }
+    s.getAudioTracks().forEach(t=>pc.addTrack(t, s));
+    Meter.attach(s);   // while transmitting, the meter shows your own voice
+    await offer();
+  }
+  async function startListening(){
+    pc=newPC();
+    pc.addTransceiver('audio', {direction:'recvonly'});
+    await offer();
+  }
+  function onAnswer(msg){
+    legID=msg.leg_id||'';
+    if(!pc) return;
+    pc.setRemoteDescription({type:'answer', sdp:msg.sdp}).catch(()=>setStatus('sdp error',''));
+  }
+  function onCandidate(c){ if(pc && c) pc.addIceCandidate(c).catch(()=>{}); }
+  function stopMedia(){
+    mode='idle';
+    Meter.stop();
+    if(pc){ try{ pc.close(); }catch(e){} pc=null; }
+    if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+    legID='';
+    updateButton();
+  }
+
+  // Short "go ahead" tone once the speaker's leg connects.
+  let actx=null;
+  function beep(){
+    try{
+      actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+      const o=actx.createOscillator(), g=actx.createGain();
+      o.frequency.value=880; o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(0.0001, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, actx.currentTime+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime+0.16);
+      o.start(); o.stop(actx.currentTime+0.18);
+    }catch(e){}
+  }
+
+  // ── ring the channel (call alert) ────────────────────────────────────────
+  // Sends an attention tone to everyone in the room. The alert has to work when
+  // the recipient isn't looking at the tab, so it's a tone + a banner + a
+  // flashing tab title.
+  const TITLE = document.title;
+  let titleTimer = null;
+
+  $('ring').onclick = ()=>{ unlockAudio(); send({type:'ring'}); };
+
+  function onRing(from){
+    Roger.ring();
+    flashNote(from===me ? 'You rang the channel' : '🔔 ' + from + ' is ringing the channel');
+    flashTitle(from===me ? null : from);
+  }
+
+  // flashNote shows a pulsing banner for a few seconds.
+  function flashNote(text){
+    const n=$('ring-note');
+    n.textContent=text;
+    n.classList.remove('hidden');
+    n.classList.remove('pulse'); void n.offsetWidth; // restart the CSS animation
+    n.classList.add('pulse');
+    clearTimeout(n._t);
+    n._t=setTimeout(()=>n.classList.add('hidden'), 5000);
+  }
+
+  // flashTitle alternates the tab title so a backgrounded tab still shows it.
+  function flashTitle(from){
+    clearInterval(titleTimer); document.title=TITLE;
+    if(!from) return;
+    let on=false, n=0;
+    titleTimer=setInterval(()=>{
+      on=!on; n++;
+      document.title = on ? ('🔔 ' + from + ' is calling') : TITLE;
+      if(n>=12){ clearInterval(titleTimer); document.title=TITLE; }
+    }, 600);
+  }
+  // Looking at the tab clears the flashing title.
+  window.addEventListener('focus', ()=>{ clearInterval(titleTimer); document.title=TITLE; });
+
+  // ── audio unlock ─────────────────────────────────────────────────────────
+  // Browsers keep audio suspended until the page sees a real user gesture. The
+  // speaker always gestures (they press PTT), but a pure listener might never
+  // click anything — and they are exactly who the roger tone is for. So unlock
+  // on the first gesture of any kind, and if audio is still blocked, show a
+  // button rather than leaving them silently deaf.
+  function unlockAudio(){
+    Roger.unlock();
+    try{ if(actx && actx.state==='suspended') actx.resume(); }catch(e){}
+    const sink=$('sink');
+    if(sink && sink.srcObject){ const pr=sink.play(); if(pr&&pr.catch) pr.catch(()=>{}); }
+    if(!Roger.suspended()) hideGate();
+  }
+  function showGate(){ const g=$('audio-gate'); if(g) g.classList.remove('hidden'); }
+  function hideGate(){ const g=$('audio-gate'); if(g) g.classList.add('hidden'); }
+  $('audio-gate').onclick=()=>{ unlockAudio(); Roger.play(rogerStyle); };
+  // Any gesture on the page counts.
+  ['pointerdown','keydown','touchstart'].forEach(ev=>
+    window.addEventListener(ev, unlockAudio, {capture:true}));
+  // On load, WebAudio starts suspended until gestured — if it stays that way,
+  // surface the gate so the listener can fix it before anyone transmits.
+  window.addEventListener('load', ()=>{
+    Roger.unlock().then(()=>{ Roger.suspended() ? showGate() : hideGate(); });
+  });
+
+  // ── roger (courtesy) tone, played at the end of a transmission ────────────
+  // The tone table (real repeater / Quindar / Baofeng specs) lives in
+  // /static/roger.js so the lobby picker and this page share one source.
+  function setRoger(style){
+    rogerStyle=style||'off';
+    const sel=$('roger-sel'); if(sel) Roger.fill(sel, rogerStyle);
+  }
+  function playRoger(){ Roger.play(rogerStyle); }
+
+  // ── roster ───────────────────────────────────────────────────────────────
+  function renderPeople(users, speaker){
+    const box=$('people');
+    $('oncount').textContent = (users.length===1 ? '1' : users.length) + ' on channel';
+    if(!users.length){ box.innerHTML='<div class="empty">nobody here yet</div>'; setSpeaker(speaker); return; }
+    box.innerHTML='';
+    users.forEach(u=>{
+      const row=document.createElement('div');
+      row.className='person'+(u===speaker?' speaking':'');
+      row.dataset.user=u;                      // markSpeaking() selects on this
+      const dot=document.createElement('span'); dot.className='dot';
+      const name=document.createElement('span'); name.textContent=u;
+      row.appendChild(dot); row.appendChild(name);
+      if(u===me){ const t=document.createElement('span'); t.className='me'; t.textContent='(you)'; row.appendChild(t); }
+      box.appendChild(row);
+    });
+    setSpeaker(speaker);
+  }
+  // Highlight the talker by data-user — never by DOM position, which breaks the
+  // moment the row markup changes.
+  function markSpeaking(speaker){
+    document.querySelectorAll('#people .person').forEach(el=>{
+      el.classList.toggle('speaking', !!speaker && el.dataset.user===speaker);
+    });
+  }
+
+  // ── invite (owner only) ──────────────────────────────────────────────────
+  const copyCode=$('copy-code'), copyLink=$('copy-link');
+  if(copyCode){
+    copyCode.onclick=()=>copy(INVITE,'code copied');
+    copyLink.onclick=()=>copy(location.origin+'/join?code='+encodeURIComponent(INVITE),'link copied');
+  }
+  function copy(text, note){
+    (navigator.clipboard? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(()=>{ $('copied').textContent=note; setTimeout(()=>$('copied').textContent='',1500); })
+      .catch(()=>{ prompt('Copy:', text); });
+  }
+
+  // ── roger setting (owner only) ───────────────────────────────────────────
+  const rogerSel=$('roger-sel');
+  if(rogerSel){
+    Roger.fill(rogerSel, rogerStyle);
+    rogerSel.onchange=async()=>{
+      const v=rogerSel.value; rogerStyle=v; // apply locally right away
+      Roger.play(v);                        // preview it
+      const res=await fetch('/api/rooms/'+encodeURIComponent(ROOM)+'/roger',{method:'PUT',
+        headers:{'Content-Type':'application/json'}, body:JSON.stringify({roger:v})});
+      $('roger-saved').textContent = res.ok ? 'saved' : 'save failed';
+      setTimeout(()=>$('roger-saved').textContent='',1500);
+    };
+    $('roger-test').onclick=()=>playRoger();
+  }
+
+  updateButton();
+  connect();
+})();
+</script>
+</body>
+</html>

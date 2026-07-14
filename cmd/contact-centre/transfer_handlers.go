@@ -296,7 +296,7 @@ func (a *app) answerTransfer(ctx context.Context, t *transfer, newAgentID, newAg
 // "supervisor" — the matrix has agent ↔ supervisor wired both ways so
 // they hear each other (no "customer" leg is in the room).
 func (a *app) bringUpConsultRoom(ctx context.Context, t *transfer, log *slog.Logger) (*voiceblender.Room, error) {
-	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: t.ConsultRoomID}); err != nil && !voiceblender.IsConflict(err) {
+	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: t.ConsultRoomID, AppID: a.appID}); err != nil && !voiceblender.IsConflict(err) {
 		return nil, err
 	}
 	room := a.client.Room(t.ConsultRoomID)

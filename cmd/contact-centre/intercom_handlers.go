@@ -135,7 +135,7 @@ func (a *app) handleAgentIntercomCall(ctx context.Context, ag *agent, kind, targ
 
 	// Create the room and add the calling agent's leg. Best-effort
 	// cleanup on failure leaves no dangling registry entry.
-	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: ic.RoomID}); err != nil && !voiceblender.IsConflict(err) {
+	if _, err := a.client.CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: ic.RoomID, AppID: a.appID}); err != nil && !voiceblender.IsConflict(err) {
 		log.Error("intercom: create room", "room", ic.RoomID, "error", err)
 		a.intercoms.End(ic.ID)
 		sendOrDrop(outbox, errorMsg("intercom.error", "room setup failed"))
