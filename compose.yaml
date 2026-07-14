@@ -1,24 +1,46 @@
-# Docker Compose example for the VoiceBlender contact-centre app.
+# Docker Compose example for the VoiceBlender contact-centre and push-to-talk apps.
+#
+# Both apps talk to ONE VoiceBlender — the existing server on the host. They stay
+# out of each other's way with `app_id`: every room and browser leg they create is
+# tagged with it, and each filters the VSI event stream down to its own. See
+# APP_ID below and each app's README.
 #
 # Topology:
 #
-#     browser / SIP-fetcher
-#              │  http://localhost  (or https://<CADDY_DOMAIN>)
-#              ▼
-#     ┌─────────────────┐    contact-centre:8090   ┌─────────────────┐
-#     │  caddy (80/443) │ ───────────────────────▶ │ contact-centre  │
-#     └─────────────────┘                          └─────────────────┘
-#                                                          │
-#                                                          ▼  (redis profile)
-#                                                  ┌─────────────────┐
-#                                                  │     redis       │
-#                                                  └─────────────────┘
+# Caddy fronts BOTH apps on the same ports (80/443) and routes by HOSTNAME:
 #
-# Every environment variable the app accepts is listed below — uncomment
+#     http://localhost/           →  contact-centre   (catch-all site)
+#     http://ptt.localhost/       →  ptt              (named site)
+#
+#     browser                        browser
+#        │ http://localhost             │ http://ptt.localhost
+#        │ (or https://$CADDY_DOMAIN)   │ (or https://$CADDY_PTT_DOMAIN)
+#        ▼                              ▼
+#     ┌───────────────────────────────────────────┐
+#     │            caddy (80 / 443)               │
+#     │       routes by Host header, not port     │
+#     └────────┬────────────────────────┬─────────┘
+#              │ contact-centre:8090    │ ptt:8092
+#              ▼                        ▼
+#     ┌─────────────────┐      ┌─────────────────┐
+#     │  contact-centre │      │       ptt       │
+#     │  app_id=        │      │  app_id=ptt     │
+#     │  contact-centre │      │                 │
+#     └────────┬────────┘      └────────┬────────┘
+#              │                        │
+#              │   ┌────────────────────┘
+#              ▼   ▼
+#     ┌─────────────────┐      ┌────────────────────────────────┐
+#     │      redis      │      │ VoiceBlender (on the host)      │
+#     │  db 0: call log │      │ host.docker.internal:8080       │
+#     │  db 1: ptt      │      │ …shared by BOTH apps            │
+#     └─────────────────┘      └────────────────────────────────┘
+#
+# Every environment variable the apps accept is listed below — uncomment
 # and tweak as needed. Sensible defaults are set; `letmein` passwords
 # are placeholders, change them before running anywhere shared.
 #
-# Quick start (memory-backed call log, default):
+# Quick start:
 #
 #     docker compose up --build              # binds host :80 and :443
 #
@@ -26,35 +48,47 @@
 #
 #     CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up --build
 #
-# With the Redis-backed call log:
+#   …then reach the apps at http://localhost:8090/ and http://ptt.localhost:8090/.
 #
-#     CALL_LOG_BACKEND=redis docker compose --profile redis up --build
+# With the Redis-backed call log for the contact centre:
 #
-# With HTTPS via Let's Encrypt (public host with DNS pointing at it):
+#     CALL_LOG_BACKEND=redis docker compose up --build
+#
+# With HTTPS via Let's Encrypt (public host, DNS for BOTH names pointing at it):
 #
 #     CADDY_DOMAIN=cc.example.com \
+#       CADDY_PTT_DOMAIN=ptt.example.com \
 #       CADDY_ACME_EMAIL=admin@example.com \
 #       HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
 #       docker compose up --build -d
 #
 # Visit:
-#   http://localhost/        supervisor panel  (via Caddy, local HTTP)
-#   http://localhost/agent   agent panel       (via Caddy, local HTTP)
-#   https://<CADDY_DOMAIN>/  supervisor panel  (Let's Encrypt cert)
+#   http://localhost/              supervisor panel   (via Caddy, local HTTP)
+#   http://localhost/agent         agent panel        (via Caddy, local HTTP)
+#   http://ptt.localhost/          push-to-talk       (via Caddy, local HTTP)
+#   https://<CADDY_DOMAIN>/        supervisor panel   (Let's Encrypt cert)
+#   https://<CADDY_PTT_DOMAIN>/    push-to-talk       (Let's Encrypt cert)
 #
 # Networking notes:
 # - VOICEBLENDER_URL points at a VoiceBlender server on the *host* via
 #   `host.docker.internal`. If you run VoiceBlender in another
-#   container, replace it with that service's hostname.
+#   container, replace it with that service's hostname. BOTH apps point at
+#   the same one on purpose.
 # - HOLD_MUSIC_URL is the URL VoiceBlender will fetch the hold-music
 #   file from, so it must be reachable from VoiceBlender's network.
 #   With VoiceBlender on the host and Caddy published on :80,
 #   host.docker.internal works (Caddy proxies through to the app).
-# - contact-centre no longer publishes a host port; it's reachable
-#   only inside the compose network as `contact-centre:8090`. To poke
-#   at it directly during debugging, `docker compose exec contact-centre
-#   wget -qO- http://localhost:8090/login` or temporarily add a
-#   `ports:` entry.
+# - Neither app publishes a host port of its own; Caddy fronts both. They're
+#   reachable inside the compose network as `contact-centre:8090` and
+#   `ptt:8092`. To poke at one directly, `docker compose exec ptt
+#   wget -qO- http://localhost:8092/login` or add a `ports:` entry.
+# - ptt needs a microphone, and browsers only grant one in a *secure context*.
+#   `localhost` and `*.localhost` count (the browser resolves them to 127.0.0.1
+#   itself — no /etc/hosts entry needed), which is why the default hostname is
+#   `ptt.localhost`. Any other plain-HTTP hostname does NOT count, so reaching
+#   it over the network needs HTTPS — set CADDY_PTT_DOMAIN to a real name.
+# - redis is no longer opt-in: ptt requires it. The contact centre still keeps
+#   its call log in memory unless you set CALL_LOG_BACKEND=redis.
 
 services:
   contact-centre:
@@ -73,6 +107,16 @@ services:
       # Address the app's HTTP server binds inside the container. Change
       # the published port below to match if you change this.
       LISTEN_ADDR: ":8090"
+      # Identifies this app on the shared VoiceBlender. Its rooms and browser
+      # (agent / supervisor) legs are tagged with it, and its VSI event stream
+      # is filtered to it, so the ptt app's traffic never reaches it.
+      APP_ID: "${CC_APP_ID:-contact-centre}"
+      # The filter also accepts events with NO app_id, because an inbound SIP
+      # call is only tagged when its INVITE carries an `X-App-ID` header — an
+      # ordinary call is unattributed, and dropping it would mean the phone
+      # never rings. If your SIP provider stamps X-App-ID on calls for this app,
+      # set this to 1 to accept only tagged events. See cmd/contact-centre/README.md.
+      # APP_ID_STRICT: "1"
       # URL VoiceBlender will fetch hold music from. Must be reachable
       # from VoiceBlender's network. With Caddy on the standard port 80
       # this is just plain `host.docker.internal/moh/...`. For production
@@ -148,6 +192,50 @@ services:
       retries: 3
       start_period: 5s
 
+  # ------------------------------------------------------ push-to-talk ----
+  # Browser walkie-talkie. Talks to the SAME VoiceBlender as the contact
+  # centre above; `app_id` is what keeps the two apart on the shared VSI
+  # event stream. Requires Redis (users, sessions and rooms live there).
+  ptt:
+    build:
+      context: .
+      dockerfile: Dockerfile.ptt
+    image: ptt-example:latest
+    container_name: ptt-example
+    # No host port mapping — Caddy fronts this service too.
+    expose:
+      - "8092"
+    environment:
+      # The *same* VoiceBlender the contact centre uses. That's the point:
+      # one media server, two apps, separated by app_id.
+      VOICEBLENDER_URL: "http://host.docker.internal:8080/v1"
+      LISTEN_ADDR: ":8092"
+      # Identifies this app on the shared VoiceBlender. Every room AND every
+      # browser leg it creates is tagged with this, and it subscribes to the VSI
+      # stream with a `^ptt$` filter — so it sees only its own events, and the
+      # contact centre never sees its traffic.
+      APP_ID: "${PTT_APP_ID:-ptt}"
+      # Redis is required. Its own database (1) keeps its keys away from the
+      # contact centre's call log in database 0.
+      REDIS_URL: "${PTT_REDIS_URL:-redis://redis:6379/1}"
+      # Log every raw VSI frame (commands sent / events received). On by
+      # default — handy for watching app_id isolation actually work. Set to 0
+      # to silence.
+      VSI_LOG: "${VSI_LOG:-1}"
+    extra_hosts:
+      # Linux needs this so host.docker.internal resolves.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8092/login"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   # ---------------------------------------------------- Caddy front-end --
   # Reverse proxy on the user-facing port. Reverse_proxy in Caddy v2
   # handles WebSocket upgrades transparently, so /api/calls/stream and
@@ -161,6 +249,8 @@ services:
     # stack is Let's-Encrypt-ready out of the box. Override if you've
     # already got something on those host ports (e.g.
     # `CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up`).
+    # Both apps share these ports. Caddy tells them apart by hostname, so no
+    # extra port is published for push-to-talk.
     ports:
       - "${CADDY_HTTP_PORT:-80}:80"
       - "${CADDY_HTTPS_PORT:-443}:443"
@@ -171,6 +261,12 @@ services:
       # serves HTTPS. Defaults below are duplicated from the Caddyfile
       # so empty env values still produce a valid configuration.
       CADDY_DOMAIN: "${CADDY_DOMAIN:-http://:80}"
+      # Push-to-talk is a second site on the SAME ports, told apart by hostname.
+      # The default `ptt.localhost` resolves to 127.0.0.1 in the browser and
+      # counts as a secure context, so the microphone works over plain HTTP.
+      # Anywhere else it won't — set a real hostname (e.g. ptt.example.com) and
+      # Caddy serves it over HTTPS on 443 next to CADDY_DOMAIN.
+      CADDY_PTT_DOMAIN: "${CADDY_PTT_DOMAIN:-http://ptt.localhost}"
       CADDY_ACME_EMAIL: "${CADDY_ACME_EMAIL:-no-reply@example.invalid}"
       CADDY_ACME_CA: "${CADDY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
     volumes:
@@ -180,18 +276,20 @@ services:
     depends_on:
       contact-centre:
         condition: service_started
+      ptt:
+        condition: service_started
     restart: unless-stopped
 
   # ----------------------------------------------------- Redis sidecar ----
-  # Opt-in: `docker compose --profile redis up`. With this profile active
-  # set CALL_LOG_BACKEND=redis (env / .env / shell) to point the app at
-  # the sidecar above.
+  # Always on: the ptt app requires Redis (it stores users, sessions and rooms
+  # there), so this is no longer behind the `redis` profile. It also backs the
+  # contact centre's call log when CALL_LOG_BACKEND=redis — that stays opt-in,
+  # and the two apps use separate databases (call log → 0, ptt → 1).
   redis:
     image: redis:7-alpine
     container_name: cc-redis
-    profiles: ["redis"]
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped

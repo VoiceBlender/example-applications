@@ -49,3 +49,29 @@
 		format console
 	}
 }
+
+# Push-to-talk — a second site on the SAME ports (80/443), told apart by
+# hostname. Caddy matches the most specific site first, so this named site wins
+# for its own host while the block above stays the catch-all.
+#
+# It gets its own hostname rather than a path prefix under the contact centre
+# because the app serves from the site root — /login, /room/{id}, /static,
+# /api/ptt/stream — and would break if mounted under a sub-path.
+#
+# Default `http://ptt.localhost`: browsers resolve *.localhost to 127.0.0.1
+# themselves, and treat it as a *secure context*, so getUserMedia hands over the
+# microphone without TLS. Anywhere other than localhost that is not true —
+# without HTTPS the mic is refused and nobody can talk — so set CADDY_PTT_DOMAIN
+# to a real hostname (e.g. ptt.example.com) and Caddy provisions a certificate
+# for it, served on 443 alongside CADDY_DOMAIN.
+#
+# reverse_proxy passes the WebSocket upgrade for /api/ptt/stream and
+# /api/lobby/stream straight through; no extra config needed.
+{$CADDY_PTT_DOMAIN:http://ptt.localhost} {
+	reverse_proxy ptt:8092
+
+	log {
+		output stdout
+		format console
+	}
+}
