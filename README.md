@@ -94,15 +94,31 @@ The compose file:
 
 WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`, `/api/ptt/stream`, `/api/lobby/stream`) pass through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config.
 
-To serve both over HTTPS, point DNS for **both** names at the host and set them:
+### Public deployment: both apps on :443, one domain each
+
+Copy [`.env.example`](./.env.example) — it is already set up for two Let's Encrypt-secured domains on the same port:
 
 ```bash
-CADDY_DOMAIN=cc.example.com \
-  CADDY_PTT_DOMAIN=ptt.example.com \
-  CADDY_ACME_EMAIL=admin@example.com \
-  HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
-  docker compose up --build -d
+cp .env.example .env
+docker compose up -d --build
 ```
+
+| URL | App | Certificate |
+|---|---|---|
+| `https://ccdemo.voiceblender.org/` | contact-centre | Let's Encrypt |
+| `https://talky.voiceblender.org/` | push-to-talk | Let's Encrypt |
+
+Both are Caddy sites on the **same `:443` listener**. Caddy reads the SNI from the TLS handshake, serves that domain's own certificate, and proxies to the matching backend — no layer-4 plugin needed. It also issues a `308` redirect from `:80` to HTTPS for both names, and renews the certs automatically. Certs and the ACME account key live in the `caddy-data` volume, so restarts don't re-issue.
+
+**Prerequisites — all three, or issuance fails:**
+
+1. **DNS** `A`/`AAAA` records for **both** names must point at the host.
+2. Host ports **80 and 443** must be reachable from the public internet. Port 80 is not optional: Let's Encrypt uses it for the HTTP-01 challenge.
+3. **Do not set `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT`** for a public deployment. Remapping them breaks issuance, because Let's Encrypt always connects to the *public* 80/443. They exist only for local plain-HTTP use.
+
+While testing, point `CADDY_ACME_CA` at the Let's Encrypt **staging** endpoint (commented in `.env.example`) — same flow, untrusted certs, no rate limits. A few failed attempts against production will lock you out for a week.
+
+> **`HOLD_MUSIC_URL` must become the HTTPS URL.** Once `CADDY_DOMAIN` is a real domain there is no catch-all `:80` site left, so VoiceBlender fetching `http://host.docker.internal/moh/…` would match no site, get a 404, and hold music would silently stop working. `.env.example` already points it at `https://ccdemo.voiceblender.org/moh/new_music.mp3`.
 
 #### Enabling HTTPS with Let's Encrypt
 

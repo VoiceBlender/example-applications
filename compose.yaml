@@ -288,8 +288,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: cc-redis
+    # Bound to the loopback interface only. The apps reach it over the compose
+    # network as `redis:6379` and need no published port at all; this mapping is
+    # purely so you can poke at it from the host during development. Publishing
+    # it on 0.0.0.0 would expose an unauthenticated Redis to the internet the
+    # moment this runs on a public box.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     restart: unless-stopped
