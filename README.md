@@ -42,6 +42,10 @@ Each example has its own multi-stage Dockerfile that produces a single self-cont
   ```bash
   docker build -f Dockerfile.pbx -t pbx .
   ```
+- **ptt** — [`Dockerfile.ptt`](./Dockerfile.ptt) (needs Redis; listens on `:8092`):
+  ```bash
+  docker build -f Dockerfile.ptt -t ptt .
+  ```
 
 Typical run:
 
@@ -61,27 +65,44 @@ Mount a custom hold-music MP3 without rebuilding:
 
 ### Docker Compose
 
-A worked [`compose.yaml`](./compose.yaml) shows every environment variable the app accepts plus an opt-in Redis sidecar for the persistent call-log backend.
+A worked [`compose.yaml`](./compose.yaml) runs **two apps against one VoiceBlender** — the contact centre and push-to-talk — plus Caddy and Redis.
 
 ```bash
-# Memory-backed call log (default):
 docker compose up --build
-
-# Redis-backed call log (brings up the sidecar):
-CALL_LOG_BACKEND=redis docker compose --profile redis up --build
 ```
+
+| URL | App |
+|---|---|
+| `http://localhost/` | contact-centre — supervisor panel |
+| `http://localhost/agent` | contact-centre — agent panel |
+| `http://ptt.localhost/` | push-to-talk |
+
+Both hostnames are served by Caddy on the **same ports** (80/443) — it routes by `Host`, not by port. Browsers resolve `*.localhost` to `127.0.0.1` themselves, so no `/etc/hosts` entry is needed.
 
 The compose file:
 
-- Brings up three services connected on the default compose network: **caddy** (the only one with host ports — `80:80` and `443:443` by default, override with `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT` if those are taken), **contact-centre** (built from the local `Dockerfile`, internal-only), and **redis** (opt-in via the `redis` profile).
-- Adds `host.docker.internal:host-gateway` to contact-centre so it can reach a VoiceBlender server on the host (the Linux equivalent of macOS/Windows behaviour).
-- Lists **every** env var the app understands inline, with the same defaults as [`.env.example`](./cmd/contact-centre/.env.example), so it doubles as the canonical reference.
-- Wraps the variables you're most likely to override (`SUPERVISOR_PASSWORD`, `AGENT_PASSWORD`, `CALL_LOG_BACKEND`, `CALL_LOG_REDIS_URL`, `CALL_LOG_REDIS_KEY`) in `${VAR:-default}` so a sibling `.env` file or shell exports take precedence without editing the YAML.
-- Includes a Redis 7 sidecar gated behind the `redis` Compose profile, with a healthcheck and a named volume for persistence across `docker compose down`.
+- Brings up four services: **caddy** (the only one with host ports — `80:80` and `443:443`, override with `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT`), **contact-centre** and **ptt** (both internal-only, fronted by Caddy), and **redis**.
+- Points **both apps at the same VoiceBlender** (`host.docker.internal:8080`) and keeps them apart with `APP_ID`: each tags the rooms and browser legs it creates, and filters the VSI event stream to its own. See each app's README.
+- **Redis is no longer opt-in** — ptt requires it (users, sessions, rooms). The apps use separate databases (contact-centre's call log → `0`, ptt → `1`). The contact centre's call log still defaults to memory; set `CALL_LOG_BACKEND=redis` to persist it.
+- Lists **every** env var each app understands inline, with the same defaults as their `.env.example` files, so it doubles as the canonical reference.
+
+**Microphone note:** push-to-talk needs `getUserMedia`, which browsers only grant in a *secure context*. `http://ptt.localhost` qualifies (localhost is exempt), but any other plain-HTTP hostname does not — to reach it over the network you need HTTPS, i.e. set `CADDY_PTT_DOMAIN`.
 
 ### Caddy reverse proxy
 
-[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service. By default it terminates plain HTTP on the container's port 80 (published to host `:80`) and proxies everything to `contact-centre:8090`. WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`) are passed through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config. If host port 80 is already taken, override with `CADDY_HTTP_PORT=8090 CADDY_HTTPS_PORT=8443 docker compose up`.
+[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service and defines **two sites on the same ports**, told apart by hostname: `CADDY_DOMAIN` (default catch-all `:80`) → `contact-centre:8090`, and `CADDY_PTT_DOMAIN` (default `ptt.localhost`) → `ptt:8092`. Caddy matches the most specific site first, so the named ptt site wins for its own host while the contact centre remains the catch-all.
+
+WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`, `/api/ptt/stream`, `/api/lobby/stream`) pass through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config.
+
+To serve both over HTTPS, point DNS for **both** names at the host and set them:
+
+```bash
+CADDY_DOMAIN=cc.example.com \
+  CADDY_PTT_DOMAIN=ptt.example.com \
+  CADDY_ACME_EMAIL=admin@example.com \
+  HOLD_MUSIC_URL=https://cc.example.com/moh/new_music.mp3 \
+  docker compose up --build -d
+```
 
 #### Enabling HTTPS with Let's Encrypt
 
