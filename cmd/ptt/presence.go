@@ -191,6 +191,20 @@ func (p *presenceRegistry) usernamesInRoom(roomID string) []string {
 	return out
 }
 
+// userPresent reports whether username has any live session in the room. Used to
+// fire a join/leave activity event only on the user's first/last session, so
+// multiple tabs don't spam the log.
+func (p *presenceRegistry) userPresent(roomID, username string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for s := range p.byRoom[roomID] {
+		if s.username == username {
+			return true
+		}
+	}
+	return false
+}
+
 // countInRoom returns the number of sessions present in a room.
 func (p *presenceRegistry) countInRoom(roomID string) int {
 	p.mu.Lock()

@@ -59,7 +59,7 @@ func normRoger(s string) string {
 
 var (
 	errRoomNotFound = errors.New("room not found")
-	errBadName      = errors.New("room name is required")
+	errBadName      = errors.New("channel name is required")
 )
 
 // Room is a push-to-talk channel. Public rooms are joinable by anyone; private

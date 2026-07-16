@@ -85,6 +85,7 @@ func (f *floorManager) press(sess *pttSession) {
 		m.send(map[string]any{"type": "listen.start"})
 	}
 	f.broadcastSpeaker(roomID, sess.username)
+	f.a.recordEvent(roomID, sess.username, eventTalk)
 	f.a.log.Info("floor granted", "room", roomID, "speaker", sess.username)
 }
 

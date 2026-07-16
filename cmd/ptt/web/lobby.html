@@ -3,64 +3,66 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Push-to-Talk · Rooms</title>
+<title>Push-to-Talk · Channels</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<div class="bar">
-  <div class="brand">VoiceBlender Push-to-Talk</div>
-  <div>
-    <span class="who">{{.User}}</span>
-    <a class="logout" href="/logout">sign out</a>
-  </div>
-</div>
 
-<div class="wrap">
-  <div class="card">
-    <div class="head">Create a room</div>
-    <div class="body">
-      <div class="err" id="create-err"></div>
-      <div class="row">
-        <div class="grow">
-          <label>Room name</label>
-          <input id="room-name" placeholder="e.g. Ops channel" maxlength="60">
-        </div>
-        <div style="width:150px;">
-          <label>Visibility</label>
-          <select id="room-vis">
-            <option value="public">Public</option>
-            <option value="private">Private</option>
-          </select>
-        </div>
-        <div style="width:230px;">
-          <label>Roger tone</label>
-          <select id="room-roger"></select>
-        </div>
-        <button class="ghost" id="roger-preview" title="Hear it">▶</button>
-        <button id="create-btn">Create</button>
+<div class="stage">
+<div class="panel">
+
+  <!-- Head: back to your channels, sign out, and the signed-in callsign. -->
+  <div class="bay head-bay">
+    <div class="head-links">
+      <a class="panel-back" href="/">◂ My channels</a>
+      <a class="panel-back" href="/logout">Sign out</a>
+    </div>
+    <span class="callsign">{{.User}}</span>
+  </div>
+
+  <div class="bay">
+    <div class="bay-head">Create a channel</div>
+    <div class="err" id="create-err"></div>
+    <div class="row">
+      <div class="grow">
+        <label>Channel name</label>
+        <input id="room-name" placeholder="e.g. Ops channel" maxlength="60">
       </div>
-      <div class="hint" style="margin-top:10px;">Public rooms are open to everyone. Private rooms are reachable only via their invite link.</div>
+      <div style="width:150px;">
+        <label>Visibility</label>
+        <select id="room-vis">
+          <option value="public">Public</option>
+          <option value="private">Private</option>
+        </select>
+      </div>
+      <div style="width:200px;">
+        <label>Roger tone</label>
+        <select id="room-roger"></select>
+      </div>
+      <button class="ghost" id="roger-preview" title="Hear it">▶</button>
+      <button id="create-btn">Create</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">Public channels are open to everyone. Private channels are reachable only via their invite link.</div>
+  </div>
+
+  <div class="bay">
+    <div class="bay-head">Join a private channel</div>
+    <div class="err" id="join-err"></div>
+    <div class="row">
+      <div class="grow">
+        <label>Invite code</label>
+        <input id="join-code" placeholder="paste an invite code" maxlength="32">
+      </div>
+      <button id="join-btn" class="ghost">Join</button>
     </div>
   </div>
 
-  <div class="card">
-    <div class="head">Join a private room</div>
-    <div class="body">
-      <div class="err" id="join-err"></div>
-      <div class="row">
-        <div class="grow">
-          <label>Invite code</label>
-          <input id="join-code" placeholder="paste an invite code" maxlength="32">
-        </div>
-        <button id="join-btn" class="ghost">Join</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="head">Rooms</div>
+  <div class="bay">
+    <div class="bay-head">Channels</div>
     <div class="rooms" id="rooms"><div class="empty">Loading…</div></div>
   </div>
+
+</div>
 </div>
 
 <script src="/static/roger.js"></script>
@@ -87,7 +89,7 @@
 
   function render(rooms){
     const box=$('rooms');
-    if(!rooms.length){ box.innerHTML='<div class="empty">No rooms yet — create one above.</div>'; return; }
+    if(!rooms.length){ box.innerHTML='<div class="empty">No channels yet — create one above.</div>'; return; }
     box.innerHTML='';
     rooms.forEach(r=>{
       const row=document.createElement('div'); row.className='roomrow';
@@ -103,7 +105,7 @@
 
       const spacer=document.createElement('div'); spacer.className='spacer';
       const enter=document.createElement('button'); enter.textContent='Enter';
-      enter.onclick=()=>{ location.href='/room/'+r.id; };
+      enter.onclick=()=>{ location.href='/?active='+encodeURIComponent(r.id); };
 
       row.appendChild(left); row.appendChild(tags); row.appendChild(spacer); row.appendChild(enter);
       if(r.owned){
@@ -120,11 +122,11 @@
   $('create-btn').onclick=async()=>{
     $('create-err').textContent='';
     const name=$('room-name').value.trim();
-    if(!name){ $('create-err').textContent='Enter a room name.'; return; }
+    if(!name){ $('create-err').textContent='Enter a channel name.'; return; }
     const res=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name, visibility:$('room-vis').value, roger:$('room-roger').value})});
-    if(!res.ok){ $('create-err').textContent='Could not create room.'; return; }
-    const j=await res.json(); location.href='/room/'+j.id;
+    if(!res.ok){ $('create-err').textContent='Could not create channel.'; return; }
+    const j=await res.json(); location.href='/?active='+encodeURIComponent(j.id);
   };
   $('join-btn').onclick=async()=>{
     $('join-err').textContent='';
@@ -133,7 +135,7 @@
     const res=await fetch('/api/rooms/join',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({code})});
     if(!res.ok){ $('join-err').textContent='Invalid invite code.'; return; }
-    const j=await res.json(); location.href='/room/'+j.id;
+    const j=await res.json(); location.href='/?active='+encodeURIComponent(j.id);
   };
   $('room-name').addEventListener('keydown',e=>{ if(e.key==='Enter') $('create-btn').click(); });
   $('join-code').addEventListener('keydown',e=>{ if(e.key==='Enter') $('join-btn').click(); });
