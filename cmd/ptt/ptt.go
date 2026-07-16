@@ -38,13 +38,22 @@ func (a *app) handlePTTStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sess := &pttSession{username: username, roomID: roomID, outbox: make(chan any, 32)}
+	// Log a join only on the user's first session in the room, so extra tabs (or
+	// watching the same channel twice) don't spam the activity feed.
+	firstSession := !a.presence.userPresent(roomID, username)
 	a.presence.add(sess)
 	a.log.Info("room joined", "user", username, "room", roomID)
+	if firstSession {
+		a.recordEvent(roomID, username, eventJoin)
+	}
 	defer func() {
 		a.floor.leave(sess)     // end the burst if speaker, else drop a listener leg
 		a.presence.remove(sess) // then leave presence
-		a.pushPresence(roomID)  // tell the room the roster changed
-		a.notifyChanged()       // refresh lobby headcounts
+		if !a.presence.userPresent(roomID, username) {
+			a.recordEvent(roomID, username, eventLeave) // last session gone → they left
+		}
+		a.pushPresence(roomID) // tell the room the roster changed
+		a.notifyChanged()      // refresh lobby headcounts
 		a.log.Info("room left", "user", username, "room", roomID)
 	}()
 
@@ -78,6 +87,7 @@ func (a *app) handlePTTStream(w http.ResponseWriter, r *http.Request) {
 	// bring this browser in as a listener.
 	owned := room.Owner == username
 	sess.send(map[string]any{"type": "hello", "user": username, "room": room.ID, "name": room.Name, "owner": owned, "invite": inviteFor(room, username), "roger": room.Roger})
+	sess.send(map[string]any{"type": "history", "events": a.recentEvents(roomID)})
 	a.pushPresence(roomID)
 	a.notifyChanged()
 	a.floor.onJoin(sess)
@@ -134,6 +144,7 @@ func (a *app) ringChannel(sess *pttSession) {
 	for _, m := range a.presence.membersInRoom(sess.roomID) {
 		m.send(msg)
 	}
+	a.recordEvent(sess.roomID, sess.username, eventRing)
 	a.log.Info("channel ring", "user", sess.username, "room", sess.roomID)
 }
 

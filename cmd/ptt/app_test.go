@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 )
@@ -50,6 +54,46 @@ func TestAppFilterEscapesMetacharacters(t *testing.T) {
 	}
 	if re.MatchString("pttXdemo") {
 		t.Error("'.' was treated as a wildcard; app id must be matched literally")
+	}
+}
+
+// handleRoomsList backs the room page's "add a channel to watch" picker. It must
+// return the same visibility-filtered set the lobby shows: public rooms and the
+// viewer's own/admitted private rooms, but not other people's private rooms.
+func TestHandleRoomsList(t *testing.T) {
+	rooms := newRoomRegistry(nil)
+	rooms.rooms = map[string]Room{
+		"pub":  {ID: "pub", Name: "Public", Owner: "bob", Visibility: visibilityPublic},
+		"mine": {ID: "mine", Name: "Mine", Owner: "alice", Visibility: visibilityPrivate},
+		"hers": {ID: "hers", Name: "Hers", Owner: "carol", Visibility: visibilityPrivate},
+	}
+	rooms.members = map[string]map[string]bool{
+		"mine": {"alice": true},
+		"hers": {"carol": true},
+	}
+	a := &app{rooms: rooms, presence: newPresenceRegistry()}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/rooms", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxUser, "alice"))
+	rec := httptest.NewRecorder()
+	a.handleRoomsList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got []roomView
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	seen := map[string]bool{}
+	for _, r := range got {
+		seen[r.ID] = true
+	}
+	if !seen["pub"] || !seen["mine"] {
+		t.Errorf("alice should see the public room and her own private room; got %v", seen)
+	}
+	if seen["hers"] {
+		t.Error("alice must not see carol's private room")
 	}
 }
 

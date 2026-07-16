@@ -32,6 +32,10 @@ func newTestApp(t *testing.T) *app {
 	}
 	t.Cleanup(func() { store.Close() })
 
+	// Start from a clean accounts key so logins are hermetic — and so a stale
+	// key left as a set by an older build doesn't trip the set→hash type change.
+	store.client.Del(context.Background(), usersKey)
+
 	a := &app{
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		store: store,
@@ -50,7 +54,8 @@ func loginClient(t *testing.T, srv *httptest.Server, user string) *http.Client {
 	t.Helper()
 	jar, _ := cookiejar.New(nil)
 	c := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := c.PostForm(srv.URL+"/login", url.Values{"username": {user}, "next": {"/"}})
+	// Any 8+ char password works; an unknown username is registered on first login.
+	resp, err := c.PostForm(srv.URL+"/login", url.Values{"username": {user}, "password": {"test-password"}, "next": {"/"}})
 	if err != nil {
 		t.Fatalf("login %s: %v", user, err)
 	}

@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -14,26 +15,20 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
+// maxWatched caps how many channels a user can persist in their monitor set.
+const maxWatched = 64
+
 //go:embed web/lobby.html
 var lobbyHTML string
 
-//go:embed web/room.html
-var roomHTML string
+//go:embed web/channels.html
+var channelsHTML string
 
 //go:embed web/static
 var staticFS embed.FS
 
 var lobbyTemplate = template.Must(template.New("lobby").Parse(lobbyHTML))
-var roomTemplate = template.Must(template.New("room").Parse(roomHTML))
-
-// roomPageData is the render context for the room page.
-type roomPageData struct {
-	RoomID string
-	Name   string
-	Owner  bool
-	Invite string
-	Roger  string
-}
+var channelsTemplate = template.Must(template.New("channels").Parse(channelsHTML))
 
 // ── lobby snapshot fan-out ────────────────────────────────────────────────────
 
@@ -94,9 +89,10 @@ func (a *app) serveHTTP() http.Handler {
 
 	gated := func(h http.HandlerFunc) http.Handler { return a.requireUser(h) }
 
-	// Pages.
-	mux.Handle("GET /{$}", gated(a.handleLobbyPage))
-	mux.Handle("GET /room/{id}", gated(a.handleRoomPage))
+	// Pages. The index is the user's channels; the full channel browser is /channels.
+	mux.Handle("GET /{$}", gated(a.handleChannelsPage))
+	mux.Handle("GET /channels", gated(a.handleLobbyPage))
+	mux.Handle("GET /room/{id}", gated(a.handleRoomRedirect)) // legacy/invite links → index
 	mux.Handle("GET /join", gated(a.handleJoinLink))
 
 	// APIs.
@@ -104,6 +100,9 @@ func (a *app) serveHTTP() http.Handler {
 	mux.Handle("POST /api/rooms/join", gated(a.handleJoinRoom))
 	mux.Handle("PUT /api/rooms/{id}/roger", gated(a.handleSetRoger))
 	mux.Handle("DELETE /api/rooms/{id}", gated(a.handleDeleteRoom))
+	mux.Handle("GET /api/rooms", gated(a.handleRoomsList))
+	mux.Handle("GET /api/watch", gated(a.handleGetWatch))
+	mux.Handle("PUT /api/watch", gated(a.handlePutWatch))
 	mux.Handle("GET /api/lobby/stream", gated(a.handleLobbyStream))
 
 	// Room signalling WebSocket (floor control + WebRTC).
@@ -118,26 +117,30 @@ func (a *app) handleLobbyPage(w http.ResponseWriter, r *http.Request) {
 	_ = lobbyTemplate.Execute(w, map[string]any{"User": userFromCtx(r)})
 }
 
-func (a *app) handleRoomPage(w http.ResponseWriter, r *http.Request) {
-	username := userFromCtx(r)
+// handleChannelsPage renders the multi-channel operating view (the index). It
+// carries no per-room data: the page loads the user's watched set from /api/watch
+// and opens a channel per id. An optional ?active=<id> makes that channel active
+// (and ensures it's watched) — this is how the browser and invite links enter a
+// channel.
+func (a *app) handleChannelsPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = channelsTemplate.Execute(w, map[string]any{"User": userFromCtx(r)})
+}
+
+// handleRoomRedirect keeps old /room/{id} links (and bookmarks) working by
+// sending them to the index with that channel active.
+func (a *app) handleRoomRedirect(w http.ResponseWriter, r *http.Request) {
 	room, ok := a.rooms.get(r.PathValue("id"))
-	if !ok || !a.rooms.canAccess(room, username) {
+	if !ok || !a.rooms.canAccess(room, userFromCtx(r)) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = roomTemplate.Execute(w, roomPageData{
-		RoomID: room.ID,
-		Name:   room.Name,
-		Owner:  room.Owner == username,
-		Invite: inviteFor(room, username),
-		Roger:  room.Roger,
-	})
+	http.Redirect(w, r, "/?active="+url.QueryEscape(room.ID), http.StatusSeeOther)
 }
 
 // handleJoinLink redeems an invite code from a shared link (/join?code=…) and
-// sends the user straight into the room.
+// sends the user to the index with that channel active.
 func (a *app) handleJoinLink(w http.ResponseWriter, r *http.Request) {
 	room, err := a.rooms.joinByCode(r.Context(), r.URL.Query().Get("code"), userFromCtx(r))
 	if err != nil {
@@ -145,7 +148,56 @@ func (a *app) handleJoinLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.notifyChanged()
-	http.Redirect(w, r, "/room/"+room.ID, http.StatusSeeOther)
+	http.Redirect(w, r, "/?active="+url.QueryEscape(room.ID), http.StatusSeeOther)
+}
+
+// handleGetWatch returns the channel ids the user watches, filtered to those
+// they can still access (rooms deleted or access revoked since are dropped).
+func (a *app) handleGetWatch(w http.ResponseWriter, r *http.Request) {
+	username := userFromCtx(r)
+	ids, err := a.store.LoadWatched(r.Context(), username)
+	if err != nil {
+		a.log.Error("load watched", "user", username, "error", err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if room, ok := a.rooms.get(id); ok && a.rooms.canAccess(room, username) {
+			out = append(out, id)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handlePutWatch replaces the user's watched set. Ids the user can't access are
+// dropped, and the list is capped so a client can't store an unbounded set.
+func (a *app) handlePutWatch(w http.ResponseWriter, r *http.Request) {
+	username := userFromCtx(r)
+	var body struct {
+		Rooms []string `json:"rooms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	seen := make(map[string]bool, len(body.Rooms))
+	ids := make([]string, 0, len(body.Rooms))
+	for _, id := range body.Rooms {
+		if seen[id] || len(ids) >= maxWatched {
+			continue
+		}
+		if room, ok := a.rooms.get(id); ok && a.rooms.canAccess(room, username) {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if err := a.store.SaveWatched(r.Context(), username, ids); err != nil {
+		a.log.Error("save watched", "user", username, "error", err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -246,6 +298,14 @@ func (a *app) handleDeleteRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRoomsList returns the viewer's visible rooms as JSON — the same snapshot
+// the lobby stream pushes, but as a one-shot for the room page's "add a channel
+// to watch" picker.
+func (a *app) handleRoomsList(w http.ResponseWriter, r *http.Request) {
+	username := userFromCtx(r)
+	writeJSON(w, http.StatusOK, a.rooms.visibleTo(username, a.presence.countInRoom))
 }
 
 // handleLobbyStream streams the viewer's room list, re-sending on any change and

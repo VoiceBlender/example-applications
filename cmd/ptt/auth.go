@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed web/login.html
@@ -25,6 +27,9 @@ type loginPageData struct {
 const (
 	cookieUser = "ptt_user"
 	sessionTTL = 12 * time.Hour
+
+	minPasswordLen = 8
+	maxPasswordLen = 72 // bcrypt only hashes the first 72 bytes — reject longer rather than silently truncate
 )
 
 // ctxKey is the type for request-context keys owned by this package.
@@ -191,8 +196,29 @@ func validUsername(s string) bool {
 	return true
 }
 
-// handleLogin renders the username form (GET) and claims a username + issues a
-// session (POST). There is no password — this is a demo identity.
+// validPassword accepts 8–72 characters (any bytes). The upper bound matches
+// bcrypt's input limit so nothing is silently truncated at hashing time.
+func validPassword(s string) bool {
+	return len(s) >= minPasswordLen && len(s) <= maxPasswordLen
+}
+
+// hashPassword returns a bcrypt hash (salt + cost encoded in the string). The
+// plaintext is never stored.
+func hashPassword(pw string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	return string(h), err
+}
+
+// checkPassword reports whether pw matches the stored bcrypt hash. The
+// comparison is constant-time inside bcrypt.
+func checkPassword(hash, pw string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
+}
+
+// handleLogin renders the sign-in form (GET) and authenticates (POST). There is
+// one form: a username the user doesn't have yet is registered with the password
+// they typed; an existing username has its password verified. Passwords are only
+// ever stored as bcrypt hashes.
 func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -208,13 +234,19 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		username := strings.TrimSpace(r.Form.Get("username"))
+		password := r.Form.Get("password")
 		next := sanitiseNext(r.Form.Get("next"))
 		if !validUsername(username) {
 			http.Redirect(w, r, "/login?err=bad&next="+next, http.StatusSeeOther)
 			return
 		}
-		if _, err := a.store.ClaimUser(r.Context(), username); err != nil {
-			a.log.Warn("claim username", "user", username, "error", err)
+		if !validPassword(password) {
+			http.Redirect(w, r, "/login?err=weakpw&next="+next, http.StatusSeeOther)
+			return
+		}
+		if !a.authenticate(r.Context(), username, password) {
+			http.Redirect(w, r, "/login?err=denied&next="+next, http.StatusSeeOther)
+			return
 		}
 		setSessionCookie(w, r, a.sessions.create(username))
 		a.log.Info("login", "user", username, "remote", r.RemoteAddr)
@@ -222,6 +254,44 @@ func (a *app) handleLogin(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// authenticate verifies an existing account's password, or registers a new
+// account on first use of a username. Registration is atomic (CreateUser uses
+// HSETNX); if two first-logins race, the loser falls back to verifying against
+// the record the winner just wrote. Returns false only when an existing
+// account's password does not match.
+func (a *app) authenticate(ctx context.Context, username, password string) bool {
+	rec, ok, err := a.store.GetUser(ctx, username)
+	if err != nil {
+		a.log.Error("get user", "user", username, "error", err)
+		return false
+	}
+	if ok {
+		return checkPassword(rec.PasswordHash, password)
+	}
+
+	hash, err := hashPassword(password)
+	if err != nil {
+		a.log.Error("hash password", "user", username, "error", err)
+		return false
+	}
+	created, err := a.store.CreateUser(ctx, userRecord{Username: username, PasswordHash: hash, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		a.log.Error("create user", "user", username, "error", err)
+		return false
+	}
+	if created {
+		a.log.Info("account created", "user", username)
+		return true
+	}
+	// Lost the create race: an account now exists — verify against it.
+	rec, ok, err = a.store.GetUser(ctx, username)
+	if err != nil || !ok {
+		a.log.Error("verify after create race", "user", username, "error", err)
+		return false
+	}
+	return checkPassword(rec.PasswordHash, password)
 }
 
 func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -237,8 +307,13 @@ func (a *app) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func loginError(code string) string {
-	if code == "bad" {
+	switch code {
+	case "bad":
 		return "Pick a username: 1–24 letters, digits, dash, underscore or dot."
+	case "weakpw":
+		return "Password must be 8–72 characters."
+	case "denied":
+		return "Incorrect password."
 	}
 	return ""
 }

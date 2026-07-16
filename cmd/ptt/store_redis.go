@@ -22,13 +22,20 @@ func init() {
 
 // Redis keys.
 const (
-	usersKey    = "ptt:users"    // set: claimed usernames (lower-case)
+	usersKey    = "ptt:users"    // hash: lower-case username → JSON userRecord
 	sessionsKey = "ptt:sessions" // hash: token → sessionRecord
 	roomsKey    = "ptt:rooms"    // hash: room id → JSON Room
 	// invitePrefix + <code> → room id (reverse lookup for join-by-code).
 	invitePrefix = "ptt:invite:"
 	// membersPrefix + <room id> is a set of usernames admitted to a private room.
 	membersPrefix = "ptt:members:"
+	// watchPrefix + <lower username> → JSON array of the channel ids that user
+	// watches, so their monitored set follows them across logins and devices.
+	watchPrefix = "ptt:watch:"
+	// eventsPrefix + <room id> is a capped list (newest first) of channelEvents.
+	eventsPrefix = "ptt:events:"
+	// maxEvents caps a room's stored activity log.
+	maxEvents = 50
 )
 
 // sessionRecord is a persisted browser session.
@@ -36,6 +43,26 @@ type sessionRecord struct {
 	Token    string    `json:"token"`
 	Username string    `json:"username"`
 	Expiry   time.Time `json:"expiry"`
+}
+
+// userRecord is a registered account. The password is stored only as a bcrypt
+// hash (salt + cost baked into the string) — never in plaintext. Username keeps
+// its original case for display; the hash is keyed by the lower-cased name.
+type userRecord struct {
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// channelEvent is one line in a room's activity log: who did what, and when.
+// Kind is one of "join", "leave", "talk", "ring". Name is the room's display
+// name at the time, so the combined feed can label events without a lookup.
+type channelEvent struct {
+	Room  string `json:"room"`
+	Name  string `json:"name"`
+	Actor string `json:"actor"`
+	Kind  string `json:"kind"`
+	At    string `json:"at"` // RFC3339Nano
 }
 
 // redisStore is the durable backing store. It's a thin wrapper over a go-redis
@@ -67,10 +94,98 @@ func (r *redisStore) Close() error { return r.client.Close() }
 
 // ── users ────────────────────────────────────────────────────────────────────
 
-// ClaimUser records a username (idempotent). Returns whether it was newly added.
-func (r *redisStore) ClaimUser(ctx context.Context, username string) (bool, error) {
-	n, err := r.client.SAdd(ctx, usersKey, strings.ToLower(username)).Result()
-	return n > 0, err
+// GetUser returns the account for username (case-insensitive). ok=false if no
+// such account exists yet.
+func (r *redisStore) GetUser(ctx context.Context, username string) (userRecord, bool, error) {
+	raw, err := r.client.HGet(ctx, usersKey, strings.ToLower(username)).Result()
+	if err == redis.Nil {
+		return userRecord{}, false, nil
+	}
+	if err != nil {
+		return userRecord{}, false, err
+	}
+	var rec userRecord
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return userRecord{}, false, err
+	}
+	return rec, true, nil
+}
+
+// CreateUser registers a new account, storing only its bcrypt hash. It uses
+// HSETNX so it is atomic: created=false means the username was already taken
+// (e.g. two first-logins racing), and the caller should fall back to verifying.
+func (r *redisStore) CreateUser(ctx context.Context, rec userRecord) (bool, error) {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return false, err
+	}
+	return r.client.HSetNX(ctx, usersKey, strings.ToLower(rec.Username), data).Result()
+}
+
+// ── watched channels (per-user monitor set) ──────────────────────────────────
+
+// SaveWatched replaces the ordered list of channel ids a user watches.
+func (r *redisStore) SaveWatched(ctx context.Context, username string, ids []string) error {
+	if ids == nil {
+		ids = []string{}
+	}
+	data, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	return r.client.Set(ctx, watchPrefix+strings.ToLower(username), data, 0).Err()
+}
+
+// LoadWatched returns the channel ids a user watches (empty if none saved).
+func (r *redisStore) LoadWatched(ctx context.Context, username string) ([]string, error) {
+	raw, err := r.client.Get(ctx, watchPrefix+strings.ToLower(username)).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// ── channel activity log ─────────────────────────────────────────────────────
+
+// AppendEvent records an activity event, capping the room's log at maxEvents
+// (newest first).
+func (r *redisStore) AppendEvent(ctx context.Context, ev channelEvent) error {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	key := eventsPrefix + ev.Room
+	pipe := r.client.TxPipeline()
+	pipe.LPush(ctx, key, data)
+	pipe.LTrim(ctx, key, 0, maxEvents-1)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// LoadEvents returns up to limit of a room's most recent events, newest first.
+func (r *redisStore) LoadEvents(ctx context.Context, roomID string, limit int) ([]channelEvent, error) {
+	if limit <= 0 || limit > maxEvents {
+		limit = maxEvents
+	}
+	raw, err := r.client.LRange(ctx, eventsPrefix+roomID, 0, int64(limit-1)).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]channelEvent, 0, len(raw))
+	for _, v := range raw {
+		var ev channelEvent
+		if json.Unmarshal([]byte(v), &ev) == nil {
+			out = append(out, ev)
+		}
+	}
+	return out, nil
 }
 
 // ── sessions ─────────────────────────────────────────────────────────────────
@@ -142,6 +257,7 @@ func (r *redisStore) DeleteRoom(ctx context.Context, room Room) error {
 		pipe.Del(ctx, invitePrefix+room.InviteCode)
 	}
 	pipe.Del(ctx, membersPrefix+room.ID)
+	pipe.Del(ctx, eventsPrefix+room.ID)
 	_, err := pipe.Exec(ctx)
 	return err
 }

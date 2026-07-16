@@ -19,7 +19,7 @@ button{width:100%; margin-top:6px;}
 <form class="card" method="post" action="/login">
   <div class="head">
     <div class="title">VoiceBlender Push-to-Talk</div>
-    <div class="sub">pick a username to get started</div>
+    <div class="sub">sign in, or pick a new username to create an account</div>
   </div>
   <div class="body">
     <div class="err">{{.Error}}</div>
@@ -28,6 +28,11 @@ button{width:100%; margin-top:6px;}
       <label>Username</label>
       <input type="text" name="username" autocomplete="username" autofocus
         placeholder="e.g. alice" maxlength="24">
+    </div>
+    <div style="margin-bottom:14px;">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password"
+        placeholder="at least 8 characters" minlength="8" maxlength="72">
     </div>
     <button type="submit">Enter</button>
   </div>

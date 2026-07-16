@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Push-to-Talk · Channels</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<div class="stage">
+
+<div class="panel">
+
+  <!-- Head: create a channel (modal), browse all channels, sign out, and the
+       status lamps for the ACTIVE channel — the one the PTT bar talks on. -->
+  <div class="bay head-bay">
+    <div class="head-links">
+      <a class="panel-back" href="#" id="open-new">＋ New channel</a>
+      <a class="panel-back" href="/channels">All channels</a>
+      <a class="panel-back" href="/logout">Sign out</a>
+    </div>
+    <div class="lamps">
+      <span class="lampset"><span class="lamp pwr" id="lamp-pwr"></span><span id="conn">—</span></span>
+      <span class="lampset"><span class="lamp tx" id="lamp-tx"></span>TX</span>
+      <span class="lampset"><span class="lamp rx" id="lamp-rx"></span>RX</span>
+    </div>
+  </div>
+
+  <!-- Readout for the active channel. aria-live so a screen reader announces
+       who's talking. -->
+  <div class="bay">
+    <div class="readout-bay">
+      <div class="readout" aria-live="polite">
+        <div class="chan">
+          <span id="chan-id">CH</span>
+          <span id="chan-name">no channel</span>
+        </div>
+        <div class="who idle" id="readout-who">standby</div>
+        <div class="status" id="status">&nbsp;</div>
+      </div>
+      <div class="chip" id="state-chip">STBY</div>
+    </div>
+
+    <!-- Signal meter: driven by the real audio of the active channel. -->
+    <div class="meter-bay" style="margin-top:12px;">
+      <span class="meter-count">Signal</span>
+      <div class="meter" id="meter"></div>
+      <span class="meter-count" id="oncount">0 on channel</span>
+    </div>
+  </div>
+
+  <!-- Controls. These act on the ACTIVE channel. -->
+  <div class="bay">
+    <button class="ptt-bar" id="ptt" disabled>
+      <span class="ptt-label" id="ptt-label">No channel</span>
+      <span class="ptt-sub" id="ptt-sub">add a channel to talk</span>
+    </button>
+
+    <div class="ctl-row">
+      <button class="ring-btn" id="ring">🔔&nbsp;&nbsp;Call</button>
+    </div>
+
+    <!-- Browsers block audio until the page gets a user gesture. A pure listener
+         may never click anything, so make the block visible and fixable. -->
+    <button id="audio-gate" class="gate hidden" style="margin-top:12px;">🔇 Audio is blocked — click to enable</button>
+    <div id="ring-note" class="ringnote hidden"></div>
+  </div>
+
+  <!-- Watched channels. The active channel is highlighted and drives the panel
+       above; the rest are monitored — you hear them all at once, and "Talk here"
+       promotes one to the active talk channel. This set is remembered per user. -->
+  <div class="bay">
+    <div class="bay-head split">
+      <span>Watching</span>
+      <span class="callsign">you are <span id="subtitle"></span></span>
+    </div>
+    <div class="channels" id="channels"></div>
+    <div class="addchan">
+      <select id="add-sel"><option value="">＋ Add a channel to watch…</option></select>
+    </div>
+  </div>
+
+  <!-- Roster of the active channel. -->
+  <div class="bay">
+    <div class="bay-head">On channel</div>
+    <div class="people" id="people"><div class="empty">…</div></div>
+  </div>
+
+  <!-- Owner-only bays for the active channel. Shown/hidden as you switch channels. -->
+  <div class="bay hidden" id="invite-bay">
+    <div class="bay-head">Invite</div>
+    <div class="invite">
+      <code id="invite-code"></code>
+      <button class="ghost" id="copy-code">Copy code</button>
+      <button class="ghost" id="copy-link">Copy link</button>
+      <span class="mono mute" id="copied"></span>
+    </div>
+  </div>
+
+  <div class="bay hidden" id="roger-bay">
+    <div class="bay-head">Roger tone — played to everyone when a transmission ends</div>
+    <div class="row">
+      <select id="roger-sel"></select>
+      <button class="ghost" id="roger-test">Test</button>
+      <span class="mono mute" id="roger-saved"></span>
+    </div>
+  </div>
+
+</div><!-- .panel -->
+
+  <!-- Combined activity feed across every watched channel, newest first. Sits in
+       its own column to the right of the radio panel (stacks below on narrow
+       screens). -->
+  <aside class="panel side">
+    <div class="bay">
+      <div class="bay-head">Activity</div>
+      <div class="activity" id="activity"><div class="empty">no activity yet</div></div>
+    </div>
+  </aside>
+
+</div><!-- .stage -->
+
+<!-- Create-a-channel modal, opened from the "＋ New channel" header link. -->
+<div class="modal-backdrop hidden" id="new-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="New channel">
+    <div class="modal-head">New channel <button class="modal-x" id="new-close" title="Close">✕</button></div>
+    <div class="modal-body">
+      <div class="err" id="new-err"></div>
+      <label>Channel name</label>
+      <input id="new-name" maxlength="60" placeholder="e.g. Ops channel">
+      <label>Visibility</label>
+      <select id="new-vis">
+        <option value="public">Public — anyone can find and join</option>
+        <option value="private">Private — reachable only via invite</option>
+      </select>
+      <label>Roger tone</label>
+      <div class="row">
+        <select id="new-roger"></select>
+        <button class="ghost" id="new-roger-preview" title="Hear it">▶</button>
+      </div>
+      <button id="new-create">Create channel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Each watched channel mounts its own <audio> sink here so they all play at once. -->
+<div id="sinks" class="hidden"></div>
+
+<script src="/static/roger.js"></script>
+<script src="/static/meter.js"></script>
+<script src="/static/channel.js"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const ME = {{.User}};
+
+  Meter.build($('meter'));
+
+  // channels: id → Channel;  meta: id → latest state snapshot;  activeId: the
+  // channel the PTT bar / meter / owner bays are bound to (null = none watched).
+  const channels = new Map();
+  const meta = new Map();
+  let activeId = null;
+  let restoring = false;   // suppress persist() while the initial set is loading
+
+  // ── active-channel chrome ───────────────────────────────────────────────────
+  function renderActive(st){
+    if(!st){ clearActive(); return; }
+    $('conn').textContent = st.conn==='connected' ? 'connected'
+      : st.conn==='reconnecting' ? 'reconnecting…' : 'connecting…';
+    $('lamp-pwr').classList.toggle('on', st.conn==='connected');
+
+    $('chan-id').textContent = 'CH·' + String(st.id).slice(0,4).toUpperCase();
+    $('chan-name').textContent = st.name || st.id;
+    $('subtitle').textContent = st.me || ME;
+
+    const s=$('status'); s.innerHTML='';
+    if(st.status && st.status.text){
+      const span=document.createElement('span');
+      if(st.status.kind) span.className=st.status.kind;
+      span.textContent=st.status.text; s.appendChild(span);
+    } else { s.innerHTML='&nbsp;'; }
+
+    const btn=$('ptt'), who=$('readout-who'), chip=$('state-chip');
+    btn.classList.remove('live','busy'); chip.classList.remove('tx','rx');
+    $('lamp-tx').classList.remove('on'); $('lamp-rx').classList.remove('on');
+    const me=st.me, spk=st.speaker;
+    if(spk && spk===me){                       // transmitting
+      btn.classList.add('live'); btn.disabled=false;
+      $('ptt-label').textContent='On air'; $('ptt-sub').textContent='release to stop';
+      who.textContent=me; who.classList.remove('idle');
+      chip.textContent='TX'; chip.classList.add('tx'); $('lamp-tx').classList.add('on');
+    } else if(spk){                            // receiving
+      btn.classList.add('busy'); btn.disabled=true;
+      $('ptt-label').textContent='Channel busy'; $('ptt-sub').textContent=spk+' is talking';
+      who.textContent=spk; who.classList.remove('idle');
+      chip.textContent='RX'; chip.classList.add('rx'); $('lamp-rx').classList.add('on');
+    } else {                                   // standby
+      btn.disabled=false;
+      $('ptt-label').textContent='Push to talk'; $('ptt-sub').textContent='hold, or press space';
+      who.textContent='standby'; who.classList.add('idle'); chip.textContent='STBY';
+    }
+
+    renderPeople(st.users, st.speaker, st.me);
+
+    const ib=$('invite-bay');
+    if(st.owner){ ib.classList.remove('hidden'); $('invite-code').textContent=st.invite; }
+    else ib.classList.add('hidden');
+    const rb=$('roger-bay');
+    if(st.owner){
+      rb.classList.remove('hidden');
+      const sel=$('roger-sel');
+      if(sel && document.activeElement!==sel) Roger.fill(sel, st.roger);
+    } else rb.classList.add('hidden');
+  }
+
+  // clearActive paints the "nothing selected" state — used when no channels are
+  // watched (or the active one was just removed).
+  function clearActive(){
+    activeId=null;
+    Meter.stop();
+    $('conn').textContent='—'; $('lamp-pwr').classList.remove('on');
+    $('lamp-tx').classList.remove('on'); $('lamp-rx').classList.remove('on');
+    $('chan-id').textContent='CH'; $('chan-name').textContent='no channel';
+    $('subtitle').textContent=ME; $('status').innerHTML='&nbsp;';
+    const btn=$('ptt'); btn.classList.remove('live','busy'); btn.disabled=true;
+    $('ptt-label').textContent='No channel'; $('ptt-sub').textContent='add a channel to talk';
+    const who=$('readout-who'); who.textContent='standby'; who.classList.add('idle');
+    const chip=$('state-chip'); chip.textContent='STBY'; chip.classList.remove('tx','rx');
+    $('people').innerHTML='<div class="empty">no channel selected</div>';
+    $('oncount').textContent='0 on channel';
+    $('invite-bay').classList.add('hidden'); $('roger-bay').classList.add('hidden');
+    renderStrips();
+  }
+
+  function renderPeople(users, speaker, me){
+    users=users||[];
+    const box=$('people');
+    $('oncount').textContent = (users.length===1 ? '1' : users.length) + ' on channel';
+    if(!users.length){ box.innerHTML='<div class="empty">nobody here yet</div>'; return; }
+    box.innerHTML='';
+    users.forEach(u=>{
+      const row=document.createElement('div');
+      row.className='person'+(u===speaker?' speaking':'');
+      row.dataset.user=u;
+      const dot=document.createElement('span'); dot.className='dot';
+      const name=document.createElement('span'); name.textContent=u;
+      row.appendChild(dot); row.appendChild(name);
+      if(u===me){ const t=document.createElement('span'); t.className='me'; t.textContent='(you)'; row.appendChild(t); }
+      box.appendChild(row);
+    });
+  }
+
+  // ── watched-channel strips ──────────────────────────────────────────────────
+  function lampKind(st){
+    if(st.conn!=='connected') return 'off';
+    if(st.speaker && st.speaker===st.me) return 'tx';
+    if(st.speaker) return 'rx';
+    return 'idle';
+  }
+  function stripSub(st){
+    if(st.conn!=='connected') return st.conn==='reconnecting' ? 'reconnecting…' : 'connecting…';
+    const n=(st.users||[]).length;
+    const base = n + ' on';
+    if(st.speaker) return base + ' · ' + (st.speaker===st.me ? 'you are live' : st.speaker+' talking');
+    return base + ' · clear';
+  }
+  function stripEl(st){
+    const id=st.id;
+    const el=document.createElement('div');
+    el.className='chan-strip'+(id===activeId?' active':'');
+    el.dataset.room=id;
+
+    const lamp=document.createElement('span'); lamp.className='chan-lamp '+lampKind(st); el.appendChild(lamp);
+
+    const info=document.createElement('div'); info.className='chan-info';
+    const nm=document.createElement('div'); nm.className='chan-name'; nm.textContent=st.name||id;
+    const sub=document.createElement('div'); sub.className='chan-sub'; sub.textContent=stripSub(st);
+    info.appendChild(nm); info.appendChild(sub); el.appendChild(info);
+
+    if(id===activeId){
+      const tag=document.createElement('span'); tag.className='tag live'; tag.textContent='talk'; el.appendChild(tag);
+    } else {
+      const t=document.createElement('button'); t.className='ghost talk-here'; t.textContent='Talk here';
+      t.onclick=(e)=>{ e.stopPropagation(); unlockAllAudio(); activate(id); }; el.appendChild(t);
+    }
+    const d=document.createElement('button'); d.className='ghost drop'; d.textContent='✕';
+    d.title='Stop watching'; d.onclick=(e)=>{ e.stopPropagation(); unwatch(id); }; el.appendChild(d);
+
+    el.onclick=()=>{ unlockAllAudio(); activate(id); };
+    return el;
+  }
+  function renderStrips(){
+    const box=$('channels');
+    if(!channels.size){ box.innerHTML='<div class="empty">not watching any channels — add one below</div>'; return; }
+    box.innerHTML='';
+    channels.forEach((_, id)=>{
+      const st=meta.get(id) || {id, name:id, users:[], speaker:'', mode:'idle', conn:'connecting', me:''};
+      box.appendChild(stripEl(st));
+    });
+  }
+  function updateStrip(st){
+    const box=$('channels');
+    const existing=box.querySelector('.chan-strip[data-room="'+st.id+'"]');
+    if(existing) box.replaceChild(stripEl(st), existing);
+    else renderStrips();
+  }
+
+  // ── combined activity feed ──────────────────────────────────────────────────
+  const activity=[]; const seenAct=new Set();
+  function actKey(e){ return e.room+'|'+e.at+'|'+e.actor+'|'+e.kind; }
+  function actVerb(k){ return k==='join'?'joined':k==='leave'?'left':k==='talk'?'talked':k==='ring'?'rang':k; }
+  function fmtTime(iso){
+    try{ return new Date(iso).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+    catch(e){ return ''; }
+  }
+  function onChannelActivity(id, events){
+    let added=false;
+    (events||[]).forEach(e=>{
+      if(!e || !e.at) return;
+      const k=actKey(e); if(seenAct.has(k)) return;
+      seenAct.add(k); activity.push(e); added=true;
+    });
+    if(!added) return;
+    activity.sort((a,b)=> a.at<b.at ? 1 : (a.at>b.at ? -1 : 0));  // newest first
+    if(activity.length>200){ activity.length=200; }
+    renderActivity();
+  }
+  function dropActivity(roomId){
+    for(let i=activity.length-1;i>=0;i--){
+      if(activity[i].room===roomId){ seenAct.delete(actKey(activity[i])); activity.splice(i,1); }
+    }
+    renderActivity();
+  }
+  function renderActivity(){
+    const box=$('activity');
+    if(!activity.length){ box.innerHTML='<div class="empty">no activity yet</div>'; return; }
+    box.innerHTML='';
+    activity.forEach(e=>{
+      const row=document.createElement('div'); row.className='act-row act-'+e.kind;
+      const t=document.createElement('span'); t.className='act-time'; t.textContent=fmtTime(e.at);
+      const c=document.createElement('span'); c.className='act-chan'; c.textContent=e.name||e.room;
+      const m=document.createElement('span'); m.className='act-msg';
+      m.textContent=(e.actor||'someone')+' '+actVerb(e.kind)+(e.kind==='ring'?' 🔔':'');
+      row.appendChild(t); row.appendChild(c); row.appendChild(m);
+      box.appendChild(row);
+    });
+  }
+
+  // ── channel lifecycle ───────────────────────────────────────────────────────
+  function onChannelState(st){
+    meta.set(st.id, st);
+    updateStrip(st);
+    if(st.id===activeId) renderActive(st);
+  }
+
+  function watch(id, opts){
+    opts=opts||{};
+    if(channels.has(id)){ if(opts.activate) activate(id); return; }
+    const ch = Channel(id, {
+      sinkMount: $('sinks'),
+      onState: onChannelState,
+      onActivity: onChannelActivity,
+      onRing: onChannelRing,
+      onRingThrottled: (cid, wait)=>flashNote('Hold on — you can ring again in '+wait+'s'),
+      onAudioBlocked: showGate,
+    });
+    channels.set(id, ch);
+    renderStrips();
+    persist();
+    if(opts.activate) activate(id);
+  }
+
+  function unwatch(id){
+    const ch=channels.get(id); if(!ch) return;
+    ch.close();
+    channels.delete(id); meta.delete(id);
+    dropActivity(id);
+    if(activeId===id){
+      const next=channels.keys().next().value;   // first remaining, or undefined
+      if(next) activate(next); else clearActive();
+    } else renderStrips();
+    persist();
+  }
+
+  // activate promotes a watched channel to the talk channel: it first releases any
+  // in-progress transmission on the old active channel (one mic, one TX), then
+  // repoints the meter and re-renders the chrome from the new channel. Which
+  // channel is active is not persisted — only the watched set is.
+  function activate(id){
+    if(id===activeId) return;
+    const prev=channels.get(activeId);
+    if(prev){ prev.release(); prev.setActive(false); }
+    activeId=id;
+    const ch=channels.get(id);
+    if(ch) ch.setActive(true);
+    const st=meta.get(id); if(st) renderActive(st);
+    renderStrips();
+  }
+
+  // ── PTT bar + Call, bound to the active channel ─────────────────────────────
+  const btn=$('ptt');
+  function pressActive(){ const ch=channels.get(activeId); if(ch) ch.press(); }
+  function releaseActive(){ const ch=channels.get(activeId); if(ch) ch.release(); }
+  btn.addEventListener('pointerdown', e=>{ e.preventDefault(); pressActive(); });
+  btn.addEventListener('pointerup', releaseActive);
+  btn.addEventListener('pointerleave', releaseActive);
+  btn.addEventListener('pointercancel', releaseActive);
+  const isField=t=>t==='INPUT'||t==='SELECT'||t==='TEXTAREA';
+  window.addEventListener('keydown', e=>{ if(e.code==='Space' && !e.repeat && !isField(e.target.tagName)){ e.preventDefault(); pressActive(); } });
+  window.addEventListener('keyup', e=>{ if(e.code==='Space' && !isField(e.target.tagName)){ e.preventDefault(); releaseActive(); } });
+
+  $('ring').onclick = ()=>{ unlockAllAudio(); const ch=channels.get(activeId); if(ch) ch.ring(); };
+
+  // ── add a channel to watch ──────────────────────────────────────────────────
+  async function loadAddOptions(){
+    const sel=$('add-sel');
+    try{
+      const res=await fetch('/api/rooms', {headers:{'Accept':'application/json'}});
+      if(!res.ok) return;
+      const rooms=await res.json();
+      sel.innerHTML='<option value="">＋ Add a channel to watch…</option>';
+      (rooms||[]).forEach(r=>{
+        if(channels.has(r.id)) return;                 // already watching
+        const o=document.createElement('option');
+        o.value=r.id; o.textContent=r.name + (r.present ? (' · '+r.present+' on') : '');
+        sel.appendChild(o);
+      });
+    }catch(e){}
+  }
+  $('add-sel').addEventListener('focus', loadAddOptions);
+  $('add-sel').onchange=()=>{ const id=$('add-sel').value; $('add-sel').value=''; if(id) watch(id, {activate: activeId===null}); };
+
+  // ── create a channel (modal) ────────────────────────────────────────────────
+  const newModal=$('new-modal');
+  function openNew(){
+    Roger.fill($('new-roger'), 'classic');
+    $('new-err').textContent=''; $('new-name').value=''; $('new-vis').value='public';
+    newModal.classList.remove('hidden'); $('new-name').focus();
+  }
+  function closeNew(){ newModal.classList.add('hidden'); }
+  $('open-new').onclick=(e)=>{ e.preventDefault(); openNew(); };
+  $('new-close').onclick=closeNew;
+  newModal.addEventListener('click', e=>{ if(e.target===newModal) closeNew(); });   // click backdrop to dismiss
+  window.addEventListener('keydown', e=>{ if(e.key==='Escape' && !newModal.classList.contains('hidden')) closeNew(); });
+  $('new-roger-preview').onclick=()=>Roger.play($('new-roger').value);
+  $('new-roger').onchange=()=>Roger.play($('new-roger').value);
+  async function createChannel(){
+    const name=$('new-name').value.trim();
+    if(!name){ $('new-err').textContent='Enter a channel name.'; return; }
+    const res=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name, visibility:$('new-vis').value, roger:$('new-roger').value})});
+    if(!res.ok){ $('new-err').textContent='Could not create channel.'; return; }
+    const j=await res.json();
+    closeNew();
+    watch(j.id, {activate:true});     // start watching the new channel and make it active
+  }
+  $('new-create').onclick=createChannel;
+  $('new-name').addEventListener('keydown', e=>{ if(e.key==='Enter') createChannel(); });
+
+  // ── ring the channel (call alert) ───────────────────────────────────────────
+  // Fires for any watched channel — the whole point of a ring is to pull you back,
+  // even to a channel you're only monitoring.
+  const TITLE=document.title; let titleTimer=null;
+  function onChannelRing(cid, from){
+    Roger.ring();
+    const st=meta.get(cid); const cname=st ? (st.name||cid) : cid; const me=st?st.me:ME;
+    flashNote(from===me ? 'You rang '+cname : '🔔 '+from+' is ringing '+cname);
+    flashTitle(from===me ? null : from);
+  }
+  function flashNote(text){
+    const n=$('ring-note');
+    n.textContent=text; n.classList.remove('hidden');
+    n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse');
+    clearTimeout(n._t); n._t=setTimeout(()=>n.classList.add('hidden'), 5000);
+  }
+  function flashTitle(from){
+    clearInterval(titleTimer); document.title=TITLE;
+    if(!from) return;
+    let on=false, n=0;
+    titleTimer=setInterval(()=>{
+      on=!on; n++;
+      document.title = on ? ('🔔 '+from+' is calling') : TITLE;
+      if(n>=12){ clearInterval(titleTimer); document.title=TITLE; }
+    }, 600);
+  }
+  window.addEventListener('focus', ()=>{ clearInterval(titleTimer); document.title=TITLE; });
+
+  // ── audio unlock (across every watched channel) ─────────────────────────────
+  function unlockAllAudio(){
+    Roger.unlock();
+    try{ channels.forEach(ch=>ch.unlockAudio()); }catch(e){}
+    if(!Roger.suspended()) hideGate();
+  }
+  function showGate(){ const g=$('audio-gate'); if(g) g.classList.remove('hidden'); }
+  function hideGate(){ const g=$('audio-gate'); if(g) g.classList.add('hidden'); }
+  $('audio-gate').onclick=()=>{ unlockAllAudio(); const st=meta.get(activeId); Roger.play(st?st.roger:'off'); };
+  ['pointerdown','keydown','touchstart'].forEach(ev=>window.addEventListener(ev, unlockAllAudio, {capture:true}));
+  window.addEventListener('load', ()=>{ Roger.unlock().then(()=>{ Roger.suspended() ? showGate() : hideGate(); }); });
+
+  // ── owner controls (active channel) ─────────────────────────────────────────
+  $('copy-code').onclick=()=>{ const st=meta.get(activeId); if(st) copy(st.invite, 'code copied'); };
+  $('copy-link').onclick=()=>{ const st=meta.get(activeId); if(st) copy(location.origin+'/join?code='+encodeURIComponent(st.invite), 'link copied'); };
+  function copy(text, note){
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(()=>{ $('copied').textContent=note; setTimeout(()=>$('copied').textContent='',1500); })
+      .catch(()=>{ prompt('Copy:', text); });
+  }
+  $('roger-sel').onchange=async()=>{
+    if(!activeId) return;
+    const v=$('roger-sel').value; Roger.play(v);          // preview it
+    const res=await fetch('/api/rooms/'+encodeURIComponent(activeId)+'/roger',{method:'PUT',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({roger:v})});
+    $('roger-saved').textContent = res.ok ? 'saved' : 'save failed';
+    setTimeout(()=>$('roger-saved').textContent='',1500);
+  };
+  $('roger-test').onclick=()=>{ const st=meta.get(activeId); Roger.play(st?st.roger:'off'); };
+
+  // ── persistence: the watched set is remembered per user, server-side ────────
+  function persist(){
+    if(restoring) return;
+    const ids=[...channels.keys()];
+    fetch('/api/watch',{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rooms:ids})}).catch(()=>{});
+  }
+
+  // ── boot ────────────────────────────────────────────────────────────────────
+  // Load the remembered watched set BEFORE any persist could overwrite it, open
+  // each channel, honour ?active=<id> (how the lobby / invite links enter a
+  // channel), then record the resulting union.
+  async function boot(){
+    $('subtitle').textContent=ME;
+    restoring=true;
+    const activeParam=new URLSearchParams(location.search).get('active') || '';
+    let ids=[];
+    try{ const res=await fetch('/api/watch',{headers:{'Accept':'application/json'}}); if(res.ok) ids=await res.json(); }catch(e){}
+    (Array.isArray(ids)?ids:[]).forEach(id=>{ if(id && !channels.has(id)) watch(id, {activate:false}); });
+    if(activeParam && !channels.has(activeParam)) watch(activeParam, {activate:false});
+    restoring=false;
+
+    const first=channels.keys().next().value;
+    const target=(activeParam && channels.has(activeParam)) ? activeParam : first;
+    if(target) activate(target); else clearActive();
+    persist();          // record the union (adds ?active= if it was newly watched)
+    loadAddOptions();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
