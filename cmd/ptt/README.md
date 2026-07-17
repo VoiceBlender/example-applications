@@ -55,6 +55,16 @@ creation, invite links, and old `/room/{id}` links all land back on the index
   the owner copies from the channel's Invite bay. Redeeming a code (or opening
   `/join?code=…`) admits the user permanently, so they can rejoin from the browser.
 
+## Radio bandwidth (per channel)
+
+When creating a channel you can tick **Radio bandwidth**: a **comms-radio
+band-limit filter** (a WebAudio high-pass + low-pass fixed at **500–2000 Hz**) that
+makes incoming voices sound like they're coming over the air rather than hi-fi.
+It's a **per-room setting** stored in Redis (`radio`/`radio_low`/`radio_high` on the
+room) and sent to each browser in the channel's `hello`; the filter is applied on
+the receive side ([`web/static/channel.js`](./web/static/channel.js), `applyRadio`).
+The signal meter taps the filter's output so it still tracks the audio you hear.
+
 ## Sharing a VoiceBlender with the other examples
 
 All the examples can point at **one** VoiceBlender instance, and its VSI stream

@@ -19,6 +19,10 @@ window.Channel = function (roomID, hooks) {
   let conn = 'connecting';    // 'connecting' | 'connected' | 'reconnecting'
   let stText = '', stKind = '';
   let pressed = false;
+  // Comms-radio band-limit filter (a per-room "Radio bandwidth" option chosen at
+  // creation): when radioOn, incoming audio is band-passed to [radioLow, radioHigh]
+  // Hz so voices sound "over the air".
+  let radioOn = false, radioLow = 500, radioHigh = 2000;
 
   // A dedicated sink per channel so monitored channels keep playing while another
   // is active. The shell mounts these somewhere hidden.
@@ -29,6 +33,7 @@ window.Channel = function (roomID, hooks) {
 
   function snapshot() {
     return { id, active, me, name, owner, invite, roger,
+      radio: radioOn, radioLow, radioHigh,
       users: users.slice(), speaker, mode, conn, status: { text: stText, kind: stKind } };
   }
   function emit() { if (hooks.onState) hooks.onState(snapshot()); }
@@ -60,9 +65,12 @@ window.Channel = function (roomID, hooks) {
       case 'hello':
         me = msg.user || ''; name = msg.name || name; owner = !!msg.owner; invite = msg.invite || '';
         if (msg.roger !== undefined) roger = msg.roger || 'off';
+        applyRadioConfig(msg);
         emit(); break;
       case 'config':
-        if (msg.roger !== undefined) { roger = msg.roger || 'off'; emit(); } break;
+        if (msg.roger !== undefined) roger = msg.roger || 'off';
+        if (applyRadioConfig(msg)) reevaluatePlayback();   // re-route only if the filter changed
+        emit(); break;
       case 'presence':
         users = msg.users || []; setSpeaker(msg.speaker || ''); break;
       case 'speaker':
@@ -98,20 +106,81 @@ window.Channel = function (roomID, hooks) {
 
   // ── WebRTC (on-demand: one peer connection per talk burst) ─────────────────
   let pc = null, micStream = null, preheating = null, legID = '', remoteStream = null;
+  let radioNodes = null, radioOut = null;   // WebAudio band-pass filter graph (radio mode)
 
-  // meterMaybe attaches the (singleton) signal meter to this channel's audio, but
-  // only while this is the active channel — the meter belongs to the chrome.
-  function meterMaybe() {
-    if (active && mode !== 'speaking' && remoteStream) Meter.attach(remoteStream);
+  // applyRadioConfig folds the room's radio settings from a hello/config message
+  // into local state; returns whether they changed (so callers can re-route audio).
+  function applyRadioConfig(msg) {
+    const before = radioOn + '|' + radioLow + '|' + radioHigh;
+    if (msg.radio !== undefined) radioOn = !!msg.radio;
+    if (msg.radio_low) radioLow = msg.radio_low;
+    if (msg.radio_high) radioHigh = msg.radio_high;
+    return before !== (radioOn + '|' + radioLow + '|' + radioHigh);
+  }
+
+  // routePlayback plays the incoming stream. In radio mode it band-passes it
+  // through WebAudio (the <audio> element is muted but must still play() so the
+  // remote track flows into WebAudio); otherwise it plays the element directly.
+  function routePlayback(stream) {
+    audio.srcObject = stream;
+    if (radioOn) {
+      audio.muted = true;
+      applyRadio(stream);
+      if (!radioOut) audio.muted = false;   // filter unavailable → play the element directly rather than go silent
+    } else {
+      clearRadio();
+      audio.muted = false;
+    }
+    const pr = audio.play(); if (pr && pr.catch) pr.catch(() => { if (hooks.onAudioBlocked) hooks.onAudioBlocked(); });
+  }
+
+  // applyRadio builds the band-pass filter graph (highpass + lowpass → output),
+  // playing to the shared Roger AudioContext. radioOut is tapped by the meter.
+  function applyRadio(stream) {
+    clearRadio();
+    const actx = Roger.ctx(); if (!actx) return;
+    let src;
+    try { src = actx.createMediaStreamSource(stream); } catch (e) { return; }
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = radioLow; hp.Q.value = 0.7;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = radioHigh; lp.Q.value = 0.7;
+    const out = actx.createGain(); out.gain.value = 1.0;
+    src.connect(hp); hp.connect(lp); lp.connect(out); out.connect(actx.destination);
+    radioNodes = [src, hp, lp, out];
+    radioOut = out;
+    if (Roger.suspended() && hooks.onAudioBlocked) hooks.onAudioBlocked();
+  }
+  function clearRadio() {
+    if (radioNodes) { for (const n of radioNodes) { try { n.disconnect(); } catch (e) {} } radioNodes = null; }
+    radioOut = null;
+  }
+
+  // reevaluatePlayback re-routes the currently-playing stream when the room's
+  // radio setting toggles live (via a config message).
+  function reevaluatePlayback() {
+    if (!remoteStream) return;
+    if (active) Meter.stop();
+    routePlayback(remoteStream);
+    updateMeter();
+  }
+
+  // updateMeter points the (singleton) signal meter at the active channel's audio:
+  // the mic while transmitting, the filter output in radio mode, else the raw
+  // incoming stream. Tapping radioOut (not a second stream source) is what keeps
+  // the filtered audio audible.
+  function updateMeter() {
+    if (!active) return;
+    if (mode === 'speaking' && micStream) { Meter.attach(micStream); return; }
+    if (radioOn && radioOut) { Meter.attachNode(radioOut); return; }
+    if (remoteStream) { Meter.attach(remoteStream); return; }
+    Meter.stop();
   }
 
   function newPC() {
     const p = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     p.ontrack = (ev) => {
       remoteStream = ev.streams[0];
-      audio.srcObject = remoteStream;
-      const pr = audio.play(); if (pr && pr.catch) pr.catch(() => { if (hooks.onAudioBlocked) hooks.onAudioBlocked(); });
-      meterMaybe();
+      routePlayback(remoteStream);
+      updateMeter();
     };
     p.onicecandidate = (ev) => { if (ev.candidate) send({ type: 'webrtc.candidate', candidate: ev.candidate.toJSON() }); };
     p.onconnectionstatechange = () => {
@@ -148,7 +217,7 @@ window.Channel = function (roomID, hooks) {
     const s = await ensureMic();
     if (!s) return;
     s.getAudioTracks().forEach(t => pc.addTrack(t, s));
-    if (active) Meter.attach(s);   // while transmitting, the meter shows your own voice
+    updateMeter();   // while transmitting, the meter shows your own voice
     await offer();
   }
   async function startListening() {
@@ -165,6 +234,7 @@ window.Channel = function (roomID, hooks) {
   function stopMedia() {
     mode = 'idle';
     if (active) Meter.stop();
+    clearRadio();
     remoteStream = null;
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
@@ -209,11 +279,8 @@ window.Channel = function (roomID, hooks) {
   // a frozen reading from the previous channel.
   function setActive(v) {
     active = !!v;
-    if (active) {
-      if (mode === 'speaking' && micStream) Meter.attach(micStream);
-      else if (mode === 'listening' && remoteStream) Meter.attach(remoteStream);
-      else Meter.stop();
-    }
+    if (active) updateMeter();
+    else Meter.stop();
     emit();
   }
 

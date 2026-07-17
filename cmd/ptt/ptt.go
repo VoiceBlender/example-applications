@@ -86,7 +86,8 @@ func (a *app) handlePTTStream(w http.ResponseWriter, r *http.Request) {
 	// Greet, publish the roster, and if a transmission is already in progress
 	// bring this browser in as a listener.
 	owned := room.Owner == username
-	sess.send(map[string]any{"type": "hello", "user": username, "room": room.ID, "name": room.Name, "owner": owned, "invite": inviteFor(room, username), "roger": room.Roger})
+	sess.send(map[string]any{"type": "hello", "user": username, "room": room.ID, "name": room.Name, "owner": owned, "invite": inviteFor(room, username), "roger": room.Roger,
+		"radio": room.Radio, "radio_low": room.RadioLow, "radio_high": room.RadioHigh})
 	sess.send(map[string]any{"type": "history", "events": a.recentEvents(roomID)})
 	a.pushPresence(roomID)
 	a.notifyChanged()
@@ -148,11 +149,13 @@ func (a *app) ringChannel(sess *pttSession) {
 	a.log.Info("channel ring", "user", sess.username, "room", sess.roomID)
 }
 
-// pushRoomConfig broadcasts a changed room setting (currently the roger tone)
-// to every session in the room so each browser updates live.
-func (a *app) pushRoomConfig(roomID, roger string) {
-	msg := map[string]any{"type": "config", "roger": roger}
-	for _, m := range a.presence.membersInRoom(roomID) {
+// pushRoomConfig broadcasts changed room settings (the roger tone and the
+// comms-radio band-limit filter) to every session in the room so each browser
+// updates live.
+func (a *app) pushRoomConfig(room Room) {
+	msg := map[string]any{"type": "config", "roger": room.Roger,
+		"radio": room.Radio, "radio_low": room.RadioLow, "radio_high": room.RadioHigh}
+	for _, m := range a.presence.membersInRoom(room.ID) {
 		m.send(msg)
 	}
 }
