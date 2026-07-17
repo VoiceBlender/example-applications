@@ -107,6 +107,7 @@
     </div>
   </div>
 
+
 </div><!-- .panel -->
 
   <!-- Combined activity feed across every watched channel, newest first. Sits in
@@ -139,6 +140,9 @@
         <select id="new-roger"></select>
         <button class="ghost" id="new-roger-preview" title="Hear it">▶</button>
       </div>
+      <label class="chk" style="margin-top:12px;">
+        <input type="checkbox" id="new-radio"> Radio bandwidth (limit audio to 500–2000&nbsp;Hz)
+      </label>
       <button id="new-create">Create channel</button>
     </div>
   </div>
@@ -436,7 +440,7 @@
   const newModal=$('new-modal');
   function openNew(){
     Roger.fill($('new-roger'), 'classic');
-    $('new-err').textContent=''; $('new-name').value=''; $('new-vis').value='public';
+    $('new-err').textContent=''; $('new-name').value=''; $('new-vis').value='public'; $('new-radio').checked=false;
     newModal.classList.remove('hidden'); $('new-name').focus();
   }
   function closeNew(){ newModal.classList.add('hidden'); }
@@ -450,7 +454,7 @@
     const name=$('new-name').value.trim();
     if(!name){ $('new-err').textContent='Enter a channel name.'; return; }
     const res=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name, visibility:$('new-vis').value, roger:$('new-roger').value})});
+      body:JSON.stringify({name, visibility:$('new-vis').value, roger:$('new-roger').value, radio:$('new-radio').checked})});
     if(!res.ok){ $('new-err').textContent='Could not create channel.'; return; }
     const j=await res.json();
     closeNew();

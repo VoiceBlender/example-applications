@@ -211,12 +211,13 @@ func (a *app) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		Name       string `json:"name"`
 		Visibility string `json:"visibility"`
 		Roger      string `json:"roger"`
+		Radio      bool   `json:"radio"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	room, err := a.rooms.create(r.Context(), body.Name, userFromCtx(r), body.Visibility, body.Roger)
+	room, err := a.rooms.create(r.Context(), body.Name, userFromCtx(r), body.Visibility, body.Roger, body.Radio)
 	if err == errBadName {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -277,7 +278,7 @@ func (a *app) handleSetRoger(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage error", http.StatusInternalServerError)
 		return
 	}
-	a.pushRoomConfig(id, updated.Roger)
+	a.pushRoomConfig(updated)
 	writeJSON(w, http.StatusOK, map[string]any{"roger": updated.Roger})
 }
 

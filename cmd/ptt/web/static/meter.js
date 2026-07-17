@@ -14,6 +14,7 @@ window.Meter = (function () {
   let segs = [];        // the segment elements
   let raf = null;       // animation frame handle
   let source = null;    // MediaStreamAudioSourceNode (disconnected on stop)
+  let tapped = null;    // externally-owned node we tapped (attachNode) — undone on stop
   let analyser = null;
   let buf = null;
 
@@ -43,14 +44,39 @@ window.Meter = (function () {
     if (!actx) return;
     try {
       source = actx.createMediaStreamSource(stream);
-      analyser = actx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.6;
-      buf = new Uint8Array(analyser.fftSize);
+      newAnalyser(actx);
       source.connect(analyser); // analyser is a sink here — not routed to output,
                                 // so metering never double-plays the audio.
     } catch (e) { return; }
+    runTick();
+  }
 
+  // attachNode meters an existing AudioNode (e.g. the tail of the radio-filter
+  // chain) instead of making a fresh MediaStreamAudioSource. Reusing the caller's
+  // source avoids creating a second MediaStreamAudioSource from the same WebRTC
+  // stream, which some browsers leave silent. The node stays owned by the caller;
+  // stop() only undoes our tap.
+  function attachNode(node) {
+    stop();
+    if (!node) return;
+    const actx = window.Roger && Roger.ctx();
+    if (!actx) return;
+    try {
+      newAnalyser(actx);
+      node.connect(analyser);
+      tapped = node;
+    } catch (e) { return; }
+    runTick();
+  }
+
+  function newAnalyser(actx) {
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.6;
+    buf = new Uint8Array(analyser.fftSize);
+  }
+
+  function runTick() {
     const tick = () => {
       if (!analyser) return;
       analyser.getByteTimeDomainData(buf);
@@ -74,9 +100,11 @@ window.Meter = (function () {
   function stop() {
     if (raf) { cancelAnimationFrame(raf); raf = null; }
     if (source) { try { source.disconnect(); } catch (e) {} source = null; }
+    if (tapped && analyser) { try { tapped.disconnect(analyser); } catch (e) {} }
+    tapped = null;
     analyser = null; buf = null;
     light(0);
   }
 
-  return { build, attach, stop, SEGMENTS };
+  return { build, attach, attachNode, stop, SEGMENTS };
 })();

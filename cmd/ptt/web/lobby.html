@@ -42,6 +42,9 @@
       <button class="ghost" id="roger-preview" title="Hear it">▶</button>
       <button id="create-btn">Create</button>
     </div>
+    <label class="chk" style="margin-top:12px;">
+      <input type="checkbox" id="room-radio"> Radio bandwidth (limit audio to 500–2000&nbsp;Hz)
+    </label>
     <div class="hint" style="margin-top:10px;">Public channels are open to everyone. Private channels are reachable only via their invite link.</div>
   </div>
 
@@ -124,7 +127,7 @@
     const name=$('room-name').value.trim();
     if(!name){ $('create-err').textContent='Enter a channel name.'; return; }
     const res=await fetch('/api/rooms',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name, visibility:$('room-vis').value, roger:$('room-roger').value})});
+      body:JSON.stringify({name, visibility:$('room-vis').value, roger:$('room-roger').value, radio:$('room-radio').checked})});
     if(!res.ok){ $('create-err').textContent='Could not create channel.'; return; }
     const j=await res.json(); location.href='/?active='+encodeURIComponent(j.id);
   };

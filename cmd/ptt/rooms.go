@@ -57,6 +57,13 @@ func normRoger(s string) string {
 	return defaultRoger
 }
 
+// Comms-radio band-limit band (Hz) applied when a channel's "Radio bandwidth"
+// option is enabled at creation.
+const (
+	radioLow  = 500
+	radioHigh = 2000
+)
+
 var (
 	errRoomNotFound = errors.New("room not found")
 	errBadName      = errors.New("channel name is required")
@@ -73,6 +80,13 @@ type Room struct {
 	InviteCode string `json:"invite_code"`
 	Roger      string `json:"roger"`      // end-of-transmission courtesy tone style
 	CreatedAt  string `json:"created_at"` // RFC3339
+
+	// Comms-radio band-limit filter: when Radio is on, each listener's browser
+	// band-passes incoming audio to [RadioLow, RadioHigh] Hz so voices sound like
+	// they're coming over the air (see web/static/channel.js).
+	Radio     bool `json:"radio,omitempty"`
+	RadioLow  int  `json:"radio_low,omitempty"`
+	RadioHigh int  `json:"radio_high,omitempty"`
 }
 
 // roomView is the lobby's per-room JSON shape (adds live listener count and
@@ -131,8 +145,9 @@ func (r *roomRegistry) count() int {
 	return len(r.rooms)
 }
 
-// create makes and persists a new room owned by owner.
-func (r *roomRegistry) create(ctx context.Context, name, owner, visibility, roger string) (Room, error) {
+// create makes and persists a new room owned by owner. radio enables the
+// comms-radio band-limit filter (fixed 500–2000 Hz) for the channel.
+func (r *roomRegistry) create(ctx context.Context, name, owner, visibility, roger string, radio bool) (Room, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return Room{}, errBadName
@@ -148,6 +163,10 @@ func (r *roomRegistry) create(ctx context.Context, name, owner, visibility, roge
 		InviteCode: randID(8),
 		Roger:      normRoger(roger),
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		Radio:      radio,
+	}
+	if radio {
+		room.RadioLow, room.RadioHigh = radioLow, radioHigh
 	}
 	if err := r.store.SaveRoom(ctx, room); err != nil {
 		return Room{}, err
