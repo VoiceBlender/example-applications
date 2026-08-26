@@ -210,55 +210,133 @@ func (m *mediaManager) maybeStartSTT(ctx context.Context, s *session) {
 	s.broadcast(map[string]any{"type": "state", "interpreting": true})
 }
 
-// startSTT begins per-leg transcription in that participant's own language.
+// startSTT brings this leg's transcriber into line with the participant's
+// currently selected language, starting or restarting it as needed.
+//
+// It is a reconciler rather than a one-shot "start", because the desired
+// language can change while a previous attempt is still in flight. sttMu
+// serializes the attempts; sttLang records what is actually running, so a drift
+// between selected and running is detectable instead of silent.
 //
 // Per-leg STT taps only that leg's incoming audio — before mixing and before
-// routing — so a speaker's transcript can never contain their peer's voice, even
-// though both legs share a room.
+// routing — so a speaker's transcript can never contain their peer's voice,
+// even though both legs share a room.
 func (m *mediaManager) startSTT(ctx context.Context, s *session, p *participant) {
-	p.mu.Lock()
-	if p.sttOn || p.legID == "" || !p.live {
-		p.mu.Unlock()
-		return
-	}
-	legID, lang := p.legID, p.lang
-	p.sttOn = true
-	p.mu.Unlock()
+	p.sttMu.Lock()
+	defer p.sttMu.Unlock()
 
-	// Remember which engine this leg ended up on: the two behave differently on
-	// the receiving side (see interpreter.onText), and with per-language routing
-	// the two participants may not be on the same one.
-	provider, _ := m.a.cfg.providerForLang(lang)
-	p.mu.Lock()
-	p.sttProvider = provider
-	p.mu.Unlock()
-
-	payload, ok := m.sttPayload(legID, lang)
-	if !ok {
+	// Up to two passes: if the selection changed while we were dialling, the
+	// second pass reconciles to the newer value rather than leaving the older
+	// one running.
+	for attempt := 0; attempt < 2; attempt++ {
 		p.mu.Lock()
-		p.sttOn = false
+		legID, want, live := p.legID, p.lang, p.live
+		running, runningLang := p.sttOn, p.sttLang
 		p.mu.Unlock()
-		m.a.log.Error("no configured transcriber can handle this language",
-			"session", s.id, "participant", p.name, "lang", lang)
-		p.send(map[string]any{"type": "warning",
-			"message": "this transcriber cannot handle that language — nothing you say will be interpreted"})
-		return
-	}
-	if _, err := m.a.vsi().LegSTTStart(ctx, payload); err != nil {
-		if isVSIConflict(err) {
-			// Already running on this leg — that is the state we wanted.
-			m.a.log.Debug("stt already running", "leg_id", legID)
+
+		if legID == "" || !live {
+			return // nothing to transcribe yet; legConnected will come back
+		}
+		if running && runningLang == want {
+			return // already transcribing the right language
+		}
+		if running {
+			// Wrong language running — stop it before starting the right one.
+			m.stopSTTOnLeg(ctx, p, legID)
+		}
+		if !m.dialSTT(ctx, s, p, legID, want) {
 			return
 		}
 		p.mu.Lock()
-		p.sttOn = false
+		settled := p.lang == want
 		p.mu.Unlock()
+		if settled {
+			return
+		}
+		// The participant changed language mid-dial; go round again.
+		m.a.log.Info("language changed while starting transcription, reconciling",
+			"session", s.id, "participant", p.name)
+	}
+}
+
+// dialSTT starts the transcriber for one language. Reports whether the leg is
+// now transcribing that language.
+func (m *mediaManager) dialSTT(ctx context.Context, s *session, p *participant, legID, lang string) bool {
+	payload, ok := m.sttPayload(legID, lang)
+	if !ok {
+		m.a.log.Error("no configured transcriber can handle this language",
+			"session", s.id, "participant", p.name, "lang", lang)
+		p.send(map[string]any{"type": "warning",
+			"message": "no transcriber here handles that language — nothing you say will be interpreted"})
+		return false
+	}
+	provider, _ := m.a.cfg.providerForLang(lang)
+
+	if _, err := m.a.vsi().LegSTTStart(ctx, payload); err != nil {
+		if isVSIConflict(err) {
+			// A transcriber is already attached to this leg — from a racing
+			// start, or a stop that has not landed. Whatever it is, it is not
+			// the language we were asked for, so clear it and try once more.
+			// Returning here (as an earlier version did) left the WRONG
+			// language transcribing with nothing to notice.
+			m.a.log.Warn("transcriber already attached, replacing it",
+				"session", s.id, "participant", p.name, "leg_id", legID)
+			m.stopSTTOnLeg(ctx, p, legID)
+			if _, err = m.a.vsi().LegSTTStart(ctx, payload); err == nil {
+				m.markSTT(p, lang, provider)
+				m.a.log.Info("stt started", "session", s.id, "participant", p.name,
+					"lang", lang, "provider", provider, "leg_id", legID)
+				return true
+			}
+		}
+		m.clearSTT(p)
 		m.a.log.Error("start stt", "session", s.id, "leg_id", legID, "error", err)
 		p.send(map[string]any{"type": "warning", "message": "transcription failed to start"})
-		return
+		return false
 	}
+	m.markSTT(p, lang, provider)
 	m.a.log.Info("stt started", "session", s.id, "participant", p.name,
 		"lang", lang, "provider", provider, "leg_id", legID)
+	return true
+}
+
+// markSTT records what is now running on this leg.
+func (m *mediaManager) markSTT(p *participant, lang, provider string) {
+	p.mu.Lock()
+	p.sttOn, p.sttLang, p.sttProvider = true, lang, provider
+	p.mu.Unlock()
+}
+
+// clearSTT records that nothing is transcribing this leg.
+func (m *mediaManager) clearSTT(p *participant) {
+	p.mu.Lock()
+	p.sttOn, p.sttLang, p.sttProvider = false, "", ""
+	p.mu.Unlock()
+}
+
+// stopSTTOnLeg tells VoiceBlender to drop the transcriber on a leg and records
+// it locally. Tolerates there being none.
+func (m *mediaManager) stopSTTOnLeg(ctx context.Context, p *participant, legID string) {
+	m.clearSTT(p)
+	if legID == "" {
+		return
+	}
+	if _, err := m.a.vsi().LegSTTStop(ctx, voiceblender.IDPayload{ID: legID}); err != nil && !isVSINotFound(err) {
+		m.a.log.Warn("stop stt", "leg_id", legID, "error", err)
+	}
+}
+
+// stopSTT ends transcription on a participant's leg.
+func (m *mediaManager) stopSTT(ctx context.Context, p *participant) {
+	p.sttMu.Lock()
+	defer p.sttMu.Unlock()
+	p.mu.Lock()
+	legID, on := p.legID, p.sttOn
+	p.mu.Unlock()
+	if !on {
+		return
+	}
+	m.stopSTTOnLeg(ctx, p, legID)
 }
 
 // sttPayload builds the provider-specific STT options.
@@ -299,21 +377,6 @@ func (m *mediaManager) sttPayload(legID, langCode string) (voiceblender.STTStart
 	return p, true
 }
 
-// stopSTT ends transcription on a leg.
-func (m *mediaManager) stopSTT(ctx context.Context, p *participant) {
-	p.mu.Lock()
-	legID := p.legID
-	on := p.sttOn
-	p.sttOn = false
-	p.mu.Unlock()
-	if !on || legID == "" {
-		return
-	}
-	if _, err := m.a.vsi().LegSTTStop(ctx, voiceblender.IDPayload{ID: legID}); err != nil && !isVSINotFound(err) {
-		m.a.log.Warn("stop stt", "leg_id", legID, "error", err)
-	}
-}
-
 // setLanguage changes a participant's language mid-session.
 //
 // The STT session is pinned to a language at start, so this restarts it. Any
@@ -324,6 +387,9 @@ func (m *mediaManager) setLanguage(ctx context.Context, s *session, p *participa
 		m.a.log.Warn("rejected unsupported language",
 			"session", s.id, "participant", p.name, "lang", code)
 		p.send(map[string]any{"type": "warning", "message": "that language is not available on this deployment"})
+		// Send the authoritative value back, or the selector goes on showing a
+		// language that was refused — the browser updates optimistically.
+		p.send(map[string]any{"type": "lang", "who": p.id, "lang": p.getLang()})
 		return
 	}
 	p.mu.Lock()
@@ -335,7 +401,9 @@ func (m *mediaManager) setLanguage(ctx context.Context, s *session, p *participa
 	p.mu.Unlock()
 
 	m.a.interp.discardAllStaged(ctx, s, p)
-	m.stopSTT(ctx, p)
+	// startSTT reconciles: it notices the running language no longer matches and
+	// replaces the transcriber. Doing an explicit stop first would open a window
+	// for a concurrent start to re-attach the OLD language.
 	m.startSTT(ctx, s, p)
 
 	m.a.log.Info("language changed", "session", s.id, "participant", p.name, "lang", code)

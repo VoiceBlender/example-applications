@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"testing"
 )
 
@@ -192,5 +193,93 @@ func TestJoinFallsBackOnUnsupportedLanguage(t *testing.T) {
 	}
 	if p2.getLang() != "pl" {
 		t.Errorf("seated speaking %q with the Speechmatics fallback, want pl", p2.getLang())
+	}
+}
+
+// A language change must actually replace the running transcriber.
+//
+// The bug: startSTT released the participant lock across the VSI round trip, so
+// a leg connecting and a language change could interleave — the connect dialled
+// the OLD language, the change's start came back 409, and the 409 branch simply
+// returned. The wrong language kept transcribing and nothing recorded the drift.
+func TestLanguageChangeReplacesTheRunningTranscriber(t *testing.T) {
+	a, fake, _, s, alice, _ := newTestApp(t)
+
+	a.media.startSTT(context.Background(), s, alice)
+	if got := fake.count("stt_start"); got != 1 {
+		t.Fatalf("initial start count %d, want 1", got)
+	}
+	if alice.runningLang() != "en" {
+		t.Fatalf("running language %q, want en", alice.runningLang())
+	}
+
+	a.media.setLanguage(context.Background(), s, alice, "de")
+
+	if got := alice.runningLang(); got != "de" {
+		t.Errorf("still transcribing %q after switching to German", got)
+	}
+	if n := fake.count("stt_stop"); n != 1 {
+		t.Errorf("stopped the old transcriber %d time(s), want 1", n)
+	}
+	if n := fake.count("stt_start"); n != 2 {
+		t.Errorf("started %d time(s), want 2", n)
+	}
+	// The new dial must carry the new language.
+	c, _ := fake.last("stt_start")
+	if c.arg != "de" {
+		t.Errorf("restarted with hint %q, want de", c.arg)
+	}
+}
+
+// Reconciling must be idempotent: asking again when the running language is
+// already correct must not churn the transcriber mid-conversation.
+func TestStartSTTIsIdempotent(t *testing.T) {
+	a, fake, _, s, alice, _ := newTestApp(t)
+
+	a.media.startSTT(context.Background(), s, alice)
+	a.media.startSTT(context.Background(), s, alice)
+	a.media.startSTT(context.Background(), s, alice)
+
+	if n := fake.count("stt_start"); n != 1 {
+		t.Errorf("dialled %d times for one unchanged language", n)
+	}
+	if n := fake.count("stt_stop"); n != 0 {
+		t.Errorf("stopped a correctly-running transcriber %d time(s)", n)
+	}
+}
+
+// If the server reports one already attached, we must replace it rather than
+// assume it is the one we wanted.
+func TestConflictReplacesRatherThanAssumes(t *testing.T) {
+	a, fake, _, s, alice, _ := newTestApp(t)
+	fake.conflictNextSTTStart = true
+
+	a.media.startSTT(context.Background(), s, alice)
+
+	if n := fake.count("stt_stop"); n != 1 {
+		t.Errorf("did not clear the conflicting transcriber (stt_stop x%d)", n)
+	}
+	if n := fake.count("stt_start"); n != 2 {
+		t.Errorf("did not retry the start after clearing (stt_start x%d)", n)
+	}
+	if got := alice.runningLang(); got != "en" {
+		t.Errorf("running language %q after the retry, want en", got)
+	}
+}
+
+// Concurrent reconciles must converge on the language actually selected, not on
+// whichever goroutine happened to finish last.
+func TestConcurrentStartsConvergeOnTheSelectedLanguage(t *testing.T) {
+	a, _, _, s, alice, _ := newTestApp(t)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); a.media.startSTT(context.Background(), s, alice) }()
+	go func() { defer wg.Done(); a.media.setLanguage(context.Background(), s, alice, "fr") }()
+	wg.Wait()
+
+	// Whatever the interleaving, the running language must match the selection.
+	if got, want := alice.runningLang(), alice.getLang(); got != want {
+		t.Errorf("transcribing %q while %q is selected", got, want)
 	}
 }

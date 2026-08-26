@@ -12,8 +12,9 @@
 
     <div class="bay head-bay">
       <div class="head-links">
-        <a class="panel-back" href="/">← Leave</a>
-        {{if .Auth}}<a class="panel-back" href="/logout">Sign out</a>{{end}}
+        {{if .Guest}}<span class="panel-back mute">Guest</span>
+        {{else}}<a class="panel-back" href="/">← Leave</a>
+        {{if .Auth}}<a class="panel-back" href="/logout">Sign out</a>{{end}}{{end}}
       </div>
       <div class="lamps">
         <div class="lampset" id="ls-pwr"><span class="lamp pwr"></span>Link</div>
@@ -60,7 +61,7 @@
       <div class="ended hidden" id="ended">
         <strong id="ended-reason">Session ended.</strong>
         <span>The audio has stopped and this link is no longer live.</span>
-        <a href="/">Start a new session →</a>
+        {{if not .Guest}}<a href="/">Start a new session →</a>{{end}}
       </div>
       <button class="gate hidden" id="gate">Audio is blocked by the browser — click to enable sound</button>
       <div class="seats">
@@ -145,6 +146,8 @@
   const paramName = params.get('name') || '';
   const paramLang = params.get('lang') || '';
   const paramGender = params.get('gender') || '';
+  // `t` is access, not a choice — someone arriving with only a token still has
+  // to be asked for their name, language and voice.
   const invited = !paramName && !paramLang && !paramGender;
 
   let myName = paramName || 'guest';
@@ -189,7 +192,11 @@
 
   Meter.build(document.getElementById('meter'));
 
-  const inviteURL = location.origin + '/s/' + encodeURIComponent(sessionID);
+  // The invite link carries the session's token: whoever opens it joins this
+  // one conversation without needing an account.
+  const inviteToken = {{.Invite}};
+  const inviteURL = location.origin + '/s/' + encodeURIComponent(sessionID)
+    + '?t=' + encodeURIComponent(inviteToken);
   el.inviteLink.textContent = inviteURL;
   document.getElementById('copy').addEventListener('click', () => {
     navigator.clipboard.writeText(inviteURL).then(
@@ -340,6 +347,8 @@
       name: myName,
       lang: wantLang,
       gender: wantGender,
+      // Presented on the socket so an invitee (who has no cookie) is admitted.
+      token: params.get('t') || '',
       onState: render,
       onCaption: (msg) => onCaption(msg, lastState),
       onNotice: notice,
@@ -380,9 +389,12 @@
       } catch (e) {}
       // Put the choices in the URL so a reload rejoins with them instead of
       // asking again.
-      const q = '?name=' + encodeURIComponent(myName)
+      let q = '?name=' + encodeURIComponent(myName)
         + '&lang=' + encodeURIComponent(wantLang)
         + '&gender=' + encodeURIComponent(wantGender);
+      // Keep the token in the URL, or a reload would lock the invitee out.
+      const t = params.get('t');
+      if (t) q += '&t=' + encodeURIComponent(t);
       history.replaceState(null, '', location.pathname + q);
       start();
     };

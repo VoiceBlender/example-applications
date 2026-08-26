@@ -152,7 +152,11 @@ Alice keeps Flux's eager path, so English→Polish stays fast; only the Polish�
 English direction pays the extra turn of latency that Speechmatics costs. One
 participant's language never drags the other off the fast engine.
 
-**Polish, Ukrainian, Turkish, Korean and Mandarin need `SPEECHMATICS_API_KEY`.**
+**Polish, Ukrainian, Turkish, Korean and Mandarin need `SPEECHMATICS_API_KEY`** —
+its own key, not `STT_API_KEY`. A generic `STT_API_KEY` stands in only for the
+*preferred* engine, because a provider is treated as available when it has a
+key, and letting one key cover both would advertise languages that then fail at
+the dial with the wrong credentials.
 Without it they are simply not offered — the selector, the join and
 `leg_stt_start` all agree, so nobody can pick a language that will transcribe
 nothing. The startup log says exactly what is routed where:
@@ -193,6 +197,12 @@ convincingly androgynous, so `TTS_VOICE_DEFAULT` simply falls back to the female
 one — set it to whatever suits your deployment rather than reading intent into
 that choice.
 
+Transcription is reconciled rather than started once: the participant's selected
+language and the language the transcriber is actually *running* are tracked
+separately, so a change always replaces the running transcriber — including when
+a leg connecting and a language change race each other, which previously left
+the wrong language transcribing with nothing to notice.
+
 Both the language and the voice ride the signalling socket's query string, so a
 participant is seated with their choices from the first frame rather than at the
 defaults with a correction to follow — otherwise the opening words of a call are
@@ -223,8 +233,20 @@ AUTH_PASSWORD=something-long
 default, so local trials stay friction-free — but on anything reachable it means
 every passer-by can start a session on your budget.
 
-It is a gate, not an identity system: both participants sign in with the same
-credential and still choose their own display name for the call. Page loads
+**The person you invite does not need to sign in.** Every session mints a
+192-bit invite token, and the link the console shows carries it:
+
+```
+https://…/s/<session>?t=<token>
+```
+
+That token admits the bearer to **that one conversation** — the session page and
+its signalling socket, nothing else. They cannot open the landing page or create
+sessions of their own, and the token dies with the session. Only the person
+starting a call needs an account.
+
+It is a gate, not an identity system: signed-in users share one credential and
+everyone still chooses their own display name for the call. Page loads
 redirect to the form; `fetch` calls and the signalling WebSocket get a 401
 instead, so a JS client never tries to parse the login page as its response.
 Credentials are compared with `crypto/subtle`, and the token is invalidated

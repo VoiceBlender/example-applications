@@ -147,13 +147,9 @@ func main() {
 	defer cancel()
 
 	cfg := config{
-		sttProvider: envOr("STT_PROVIDER", "deepgram_flux"),
-		sttFallback: envOr("STT_FALLBACK_PROVIDER", "speechmatics"),
-		sttKeys: map[string]string{
-			"deepgram_flux": firstEnv("DEEPGRAM_API_KEY", "STT_API_KEY"),
-			"deepgram":      firstEnv("DEEPGRAM_API_KEY", "STT_API_KEY"),
-			"speechmatics":  firstEnv("SPEECHMATICS_API_KEY", "STT_API_KEY"),
-		},
+		sttProvider:  envOr("STT_PROVIDER", "deepgram_flux"),
+		sttFallback:  envOr("STT_FALLBACK_PROVIDER", "speechmatics"),
+		sttKeys:      sttKeysFromEnv(envOr("STT_PROVIDER", "deepgram_flux")),
 		eagerEOT:     envFloat("STT_EAGER_EOT_THRESHOLD", 0.7),
 		ttsProvider:  envOr("TTS_PROVIDER", "elevenlabs"),
 		ttsModelID:   envOr("TTS_MODEL_ID", "eleven_flash_v2_5"),
@@ -453,6 +449,25 @@ func envFloat(key string, def float64) float64 {
 		return def
 	}
 	return f
+}
+
+// sttKeysFromEnv resolves one API key per transcriber.
+//
+// STT_API_KEY stands in only for the PREFERRED provider — the "I use a single
+// engine" case. It deliberately does NOT apply to the others: a provider is
+// treated as available if it has a key, so letting one generic key cover
+// everything would advertise languages we cannot actually transcribe and fail
+// at the dial with somebody else's credentials.
+func sttKeysFromEnv(preferred string) map[string]string {
+	keys := map[string]string{
+		"deepgram_flux": os.Getenv("DEEPGRAM_API_KEY"),
+		"deepgram":      os.Getenv("DEEPGRAM_API_KEY"),
+		"speechmatics":  os.Getenv("SPEECHMATICS_API_KEY"),
+	}
+	if generic := os.Getenv("STT_API_KEY"); generic != "" && keys[preferred] == "" {
+		keys[preferred] = generic
+	}
+	return keys
 }
 
 // envDuration reads a Go duration string ("90s", "10m", "1h30m") from the

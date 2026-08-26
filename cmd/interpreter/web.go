@@ -40,12 +40,19 @@ func (a *app) serveHTTP() http.Handler {
 
 	mux.Handle("GET /{$}", a.requireLogin(a.handleIndex))
 	mux.Handle("POST /api/sessions", a.requireLogin(a.handleCreateSession))
-	mux.Handle("GET /s/{id}", a.requireLogin(a.handleSessionPage))
+	// A session page and its socket accept EITHER a login or that session's
+	// invite token, so the person you share the link with does not need an
+	// account. Creating sessions stays login-only.
+	mux.Handle("GET /s/{id}", a.requireSessionAccess(
+		func(r *http.Request) string { return r.PathValue("id") },
+		a.handleSessionPage))
 
 	// The session's signalling WebSocket: WebRTC negotiation, language changes,
 	// captions and presence all ride this one socket. Gated too — it is the
 	// expensive one, since a connected leg streams audio to the STT vendor.
-	mux.Handle("GET /api/interpreter/stream", a.requireLogin(a.handleStream))
+	mux.Handle("GET /api/interpreter/stream", a.requireSessionAccess(
+		func(r *http.Request) string { return r.URL.Query().Get("session") },
+		a.handleStream))
 
 	return mux
 }
@@ -72,7 +79,8 @@ func (a *app) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // handleSessionPage renders the call view for a session that still exists.
 func (a *app) handleSessionPage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := a.sessions.get(id); !ok {
+	sess, ok := a.sessions.get(id)
+	if !ok {
 		http.Redirect(w, r, "/?gone=1", http.StatusSeeOther)
 		return
 	}
@@ -83,6 +91,12 @@ func (a *app) handleSessionPage(w http.ResponseWriter, r *http.Request) {
 		"Languages": a.cfg.offeredLanguages(),
 		"Genders":   genders,
 		"Auth":      a.auth.enabled(),
+		// The token goes to the page so it can build the invite link and carry
+		// it onto the WebSocket. Anyone who can read it is already in the call.
+		"Invite": sess.invite,
+		// An invitee has no account, so the page must not offer them links to
+		// pages they cannot reach.
+		"Guest": !a.authed(r),
 	})
 }
 

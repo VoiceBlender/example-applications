@@ -65,6 +65,11 @@ type participant struct {
 	legID  string
 	live   bool // the leg has connected (STT may start)
 	sttOn  bool
+	// sttLang is the language the RUNNING transcriber was started with, as
+	// opposed to `lang`, which is what the participant has currently selected.
+	// Keeping both is what makes a drift between them detectable: without it a
+	// failed restart leaves the wrong language running and nothing notices.
+	sttLang string
 	// sttProvider is the engine this leg's transcription actually runs on.
 	// With per-language routing the two participants may differ, and the two
 	// engines report turns differently — see interpreter.onText.
@@ -85,6 +90,12 @@ type participant struct {
 	// ever commit.
 	maxDone int
 	c       *conn
+
+	// sttMu serializes transcriber start/stop for this leg. mu is released
+	// across the VSI round trip, so without this a leg connecting and a
+	// language change can interleave and leave the transcriber running in a
+	// language nobody selected.
+	sttMu sync.Mutex
 }
 
 // putStaged records a speculative utterance under both its turn index and its
@@ -163,6 +174,14 @@ func (p *participant) getLang() string {
 	return p.lang
 }
 
+// runningLang is the language the transcriber is actually running in, which is
+// not necessarily the one selected — see startSTT.
+func (p *participant) runningLang() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sttLang
+}
+
 // usesTurnEvents reports whether this leg's transcriber reports turn boundaries
 // (Deepgram Flux). Those legs are driven by stt.turn and must ignore final
 // stt.text, or every utterance would be spoken twice.
@@ -231,7 +250,12 @@ func (c *conn) send(msg any) {
 
 // session is one interpreted conversation.
 type session struct {
-	id      string
+	id string
+	// invite is the bearer token that lets the OTHER person in without an
+	// account. It is scoped to this session and dies with it — see
+	// app.invitedTo. Kept separate from the id so the id can appear in logs
+	// without handing out access.
+	invite  string
 	created time.Time
 
 	mu      sync.Mutex
@@ -378,7 +402,13 @@ func newSessionRegistry() *sessionRegistry {
 func (r *sessionRegistry) create() *session {
 	// emptySince starts ticking immediately: a link that is minted and never
 	// opened should not linger forever.
-	s := &session{id: newID(6), created: time.Now(), emptySince: time.Now()}
+	s := &session{
+		id: newID(6),
+		// 192 bits: this token is the only thing guarding the conversation for
+		// whoever joins by link, so it has to be unguessable.
+		invite:  newID(24),
+		created: time.Now(), emptySince: time.Now(),
+	}
 	r.mu.Lock()
 	r.byID[s.id] = s
 	r.mu.Unlock()

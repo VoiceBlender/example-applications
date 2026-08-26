@@ -122,6 +122,40 @@ func (a *app) authed(r *http.Request) bool {
 	return ok
 }
 
+// invitedTo reports whether the request carries the invite token for a session.
+//
+// This is what lets the second person into a call without an account: the
+// creator signs in, shares a link carrying the token, and the invitee is
+// admitted to THAT conversation and nothing else. They still cannot reach the
+// landing page or create sessions of their own.
+func (a *app) invitedTo(r *http.Request, sessionID string) bool {
+	token := r.URL.Query().Get("t")
+	if token == "" || sessionID == "" {
+		return false
+	}
+	s, ok := a.sessions.get(sessionID)
+	if !ok {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.invite)) == 1
+}
+
+// requireSessionAccess gates the per-session routes: a signed-in user, or the
+// bearer of that session's invite token.
+func (a *app) requireSessionAccess(sessionID func(*http.Request) string, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.authed(r) || a.invitedTo(r, sessionID(r)) {
+			next(w, r)
+			return
+		}
+		if wantsHTML(r) {
+			http.Redirect(w, r, "/login?next="+urlEscape(r.URL.RequestURI()), http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	})
+}
+
 // requireLogin wraps a handler so it only runs for an authenticated request.
 //
 // Page loads are redirected to the login form; everything else — fetch calls and

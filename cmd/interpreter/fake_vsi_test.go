@@ -27,6 +27,22 @@ type fakeVSI struct {
 
 	// voices records the voice id of every synthesis request, in order.
 	voices []string
+
+	// conflictNextSTTStart makes the next stt start report "already running",
+	// the state that used to leave the wrong language transcribing.
+	conflictNextSTTStart bool
+}
+
+// last returns the most recent call of an op.
+func (f *fakeVSI) last(op string) (call, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.calls) - 1; i >= 0; i-- {
+		if f.calls[i].op == op {
+			return f.calls[i], true
+		}
+	}
+	return call{}, false
 }
 
 func (f *fakeVSI) noteVoice(v string) {
@@ -148,9 +164,17 @@ func (f *fakeVSI) LegPlayStop(_ context.Context, p voiceblender.PlaybackTargetPa
 }
 
 func (f *fakeVSI) LegSTTStart(_ context.Context, p voiceblender.STTStartPayload) (voiceblender.STTStartLegResult, error) {
-	hint := ""
+	hint := p.Language
 	if len(p.LanguageHints) > 0 {
 		hint = p.LanguageHints[0]
+	}
+	f.mu.Lock()
+	conflict := f.conflictNextSTTStart
+	f.conflictNextSTTStart = false
+	f.mu.Unlock()
+	if conflict {
+		f.record("stt_start", p.ID, hint, p.Language)
+		return voiceblender.STTStartLegResult{}, &voiceblender.VSIError{Code: 409, Message: "STT already running on this leg"}
 	}
 	f.record("stt_start", p.ID, hint, p.Language)
 	return voiceblender.STTStartLegResult{Status: "started", LegID: p.ID}, nil

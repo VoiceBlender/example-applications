@@ -184,3 +184,108 @@ func TestUnknownTokenIsRejected(t *testing.T) {
 		t.Error("an unknown token authenticated")
 	}
 }
+
+// The person you share a link with has no account, so the invite token has to
+// admit them — to that one conversation and nothing else.
+func TestInviteTokenAdmitsWithoutLogin(t *testing.T) {
+	a := testAuthApp(t, "alice", "s3cret")
+	h := a.serveHTTP()
+	s := a.sessions.create()
+
+	// No login, no token: refused.
+	req := httptest.NewRequest(http.MethodGet, "/s/"+s.id, nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("no credentials returned %d, want a redirect to login", rec.Code)
+	}
+
+	// With the token: admitted.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/s/"+s.id+"?t="+s.invite, nil)
+	req.Header.Set("Accept", "text/html")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("valid invite returned %d, want 200", rec.Code)
+	}
+
+	// The socket must accept it too, or the page loads and then cannot connect.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/interpreter/stream?session="+s.id+"&t="+s.invite, nil)
+	req.Header.Set("Upgrade", "websocket")
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Error("socket rejected a valid invite token")
+	}
+}
+
+// The token is scoped: it must not open a different conversation, and a wrong
+// one must not open anything.
+func TestInviteTokenIsScopedAndChecked(t *testing.T) {
+	a := testAuthApp(t, "alice", "s3cret")
+	h := a.serveHTTP()
+	mine := a.sessions.create()
+	theirs := a.sessions.create()
+
+	cases := []struct{ name, path string }{
+		{"another session's token", "/s/" + theirs.id + "?t=" + mine.invite},
+		{"a wrong token", "/s/" + mine.id + "?t=" + newID(24)},
+		{"an empty token", "/s/" + mine.id + "?t="},
+		{"an unknown session", "/s/doesnotexist?t=" + mine.invite},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Header.Set("Accept", "text/html")
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			t.Errorf("%s was admitted", tc.name)
+		}
+	}
+}
+
+// An invitee must not be able to mint sessions of their own — the token buys
+// access to one conversation, not an account.
+func TestInviteTokenCannotCreateSessions(t *testing.T) {
+	a := testAuthApp(t, "alice", "s3cret")
+	s := a.sessions.create()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions?t="+s.invite, nil)
+	rec := httptest.NewRecorder()
+	a.serveHTTP().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("an invitee created a session (%d)", rec.Code)
+	}
+}
+
+// Two sessions must not share a token, and it must be long enough to be worth
+// calling a secret — it is the only thing guarding the conversation.
+func TestInviteTokensAreUniqueAndUnguessable(t *testing.T) {
+	a := testAuthApp(t, "alice", "s3cret")
+	seen := map[string]bool{}
+	for i := 0; i < 50; i++ {
+		s := a.sessions.create()
+		if len(s.invite) < 32 {
+			t.Fatalf("invite token is only %d chars", len(s.invite))
+		}
+		if seen[s.invite] {
+			t.Fatal("duplicate invite token")
+		}
+		seen[s.invite] = true
+	}
+}
+
+// With no password configured there is no gate at all, so a link with no token
+// must still work.
+func TestInviteIrrelevantWhenAuthIsOff(t *testing.T) {
+	a := testAuthApp(t, "interpreter", "")
+	s := a.sessions.create()
+	req := httptest.NewRequest(http.MethodGet, "/s/"+s.id, nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	a.serveHTTP().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("returned %d with auth disabled, want 200", rec.Code)
+	}
+}

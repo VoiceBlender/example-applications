@@ -52,7 +52,8 @@ window.Session = function (sessionID, hooks) {
       + '?session=' + encodeURIComponent(id)
       + '&name=' + encodeURIComponent(hooks.name || '')
       + '&lang=' + encodeURIComponent(myLang)
-      + '&gender=' + encodeURIComponent(myGender);
+      + '&gender=' + encodeURIComponent(myGender)
+      + (hooks.token ? '&t=' + encodeURIComponent(hooks.token) : '');
     ws = new WebSocket(url);
     ws.onopen = () => {
       backoff = 700; conn = 'connected'; emit();
