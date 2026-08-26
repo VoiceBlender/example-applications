@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpreter · {{.SessionID}}</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="stage">
+  <div class="panel">
+
+    <div class="bay head-bay">
+      <div class="head-links">
+        <a class="panel-back" href="/">← Leave</a>
+        {{if .Auth}}<a class="panel-back" href="/logout">Sign out</a>{{end}}
+      </div>
+      <div class="lamps">
+        <div class="lampset" id="ls-pwr"><span class="lamp pwr"></span>Link</div>
+        <div class="lampset" id="ls-mic"><span class="lamp mic"></span>Mic</div>
+        <div class="lampset" id="ls-live"><span class="lamp live"></span>Interpreting</div>
+      </div>
+    </div>
+
+    <!-- Shown to anyone who arrives on a bare invite link, i.e. everyone the
+         session was shared with. They have made no choices yet, so ask before
+         joining rather than dropping them in as a English-speaking "guest" —
+         and before taking their microphone. -->
+    <div class="bay hidden" id="prejoin">
+      <div class="bay-head">Join this session</div>
+      <div class="row">
+        <div class="grow">
+          <label for="pj-name">Your name</label>
+          <input id="pj-name" autocomplete="nickname" placeholder="bob" maxlength="24">
+        </div>
+        <div class="grow">
+          <label for="pj-lang">You speak</label>
+          <select id="pj-lang">
+            {{range .Languages}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <div class="grow">
+          <label for="pj-gender">Your voice</label>
+          <select id="pj-gender">
+            {{range .Genders}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <button id="pj-join">Join</button>
+      </div>
+      <p class="hint" style="margin-top:12px">
+        <em>You speak</em> is the language you'll be talking in.
+        <em>Your voice</em> is the one the other person hears your words spoken in.
+        Both can be changed once you're in.
+      </p>
+    </div>
+
+    <div class="bay hidden" id="console">
+      <div class="bay-head">Session</div>
+      <div id="notices"></div>
+      <div class="ended hidden" id="ended">
+        <strong id="ended-reason">Session ended.</strong>
+        <span>The audio has stopped and this link is no longer live.</span>
+        <a href="/">Start a new session →</a>
+      </div>
+      <button class="gate hidden" id="gate">Audio is blocked by the browser — click to enable sound</button>
+      <div class="seats">
+        <div class="seat" id="seat-me" data-seat="0">
+          <div class="seat-who">
+            <span class="seat-dot"></span>
+            <span class="seat-name" id="me-name">you</span>
+            <span class="seat-tag">You</span>
+          </div>
+          <div>
+            <label for="me-lang">You speak</label>
+            <select id="me-lang">
+              {{range .Languages}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+            </select>
+          </div>
+          <div>
+            <label for="me-gender">Your voice <span class="mute">(what they hear)</span></label>
+            <select id="me-gender">
+              {{range .Genders}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+            </select>
+          </div>
+        </div>
+
+        <div class="flow">
+          <span class="arrow" id="arrow-out">→</span>
+          <span id="flow-label">interpreted</span>
+          <span class="arrow" id="arrow-in">←</span>
+        </div>
+
+        <div class="seat" id="seat-peer" data-seat="1">
+          <div class="seat-who">
+            <span class="seat-dot"></span>
+            <span class="seat-name" id="peer-name">waiting…</span>
+            <span class="seat-tag" id="peer-tag">Them</span>
+          </div>
+          <div id="peer-lang-wrap">
+            <label>They speak</label>
+            <div class="waiting" id="peer-lang">—</div>
+          </div>
+          <div>
+            <label>Their voice</label>
+            <div class="waiting" id="peer-gender">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bay hidden panel-live">
+      <div class="bay-head split"><span>Transcript</span><span class="mono" id="cap-count"></span></div>
+      <div class="captions" id="captions">
+        <div class="cap-empty" id="cap-empty">Say something. The original and its translation appear here.</div>
+      </div>
+    </div>
+
+    <div class="bay meter-bay hidden panel-live">
+      <div class="meter" id="meter"></div>
+      <div class="meter-count">Incoming</div>
+    </div>
+
+    <div class="bay">
+      <div class="bay-head">Invite</div>
+      <div class="invite">
+        <code id="invite-link"></code>
+        <button class="ghost" id="copy">Copy link</button>
+      </div>
+      <p class="hint" id="limits" style="margin-top:10px"></p>
+    </div>
+
+  </div>
+</div>
+
+<script src="/static/audioctx.js"></script>
+<script src="/static/meter.js"></script>
+<script src="/static/interp.js"></script>
+<script>
+(function () {
+  const sessionID = {{.SessionID}};
+  const params = new URLSearchParams(location.search);
+
+  // The landing page sends these through; a shared invite link does not. Their
+  // absence is exactly how we know this person has not chosen anything yet.
+  const paramName = params.get('name') || '';
+  const paramLang = params.get('lang') || '';
+  const paramGender = params.get('gender') || '';
+  const invited = !paramName && !paramLang && !paramGender;
+
+  let myName = paramName || 'guest';
+  let wantLang = paramLang;
+  let wantGender = paramGender;
+
+  const el = {
+    seatMe: document.getElementById('seat-me'),
+    seatPeer: document.getElementById('seat-peer'),
+    meName: document.getElementById('me-name'),
+    meLang: document.getElementById('me-lang'),
+    peerName: document.getElementById('peer-name'),
+    peerLang: document.getElementById('peer-lang'),
+    meGender: document.getElementById('me-gender'),
+    peerGender: document.getElementById('peer-gender'),
+    captions: document.getElementById('captions'),
+    capEmpty: document.getElementById('cap-empty'),
+    capCount: document.getElementById('cap-count'),
+    notices: document.getElementById('notices'),
+    gate: document.getElementById('gate'),
+    prejoin: document.getElementById('prejoin'),
+    console: document.getElementById('console'),
+    pjName: document.getElementById('pj-name'),
+    pjLang: document.getElementById('pj-lang'),
+    pjGender: document.getElementById('pj-gender'),
+    pjJoin: document.getElementById('pj-join'),
+    ended: document.getElementById('ended'),
+    endedReason: document.getElementById('ended-reason'),
+    limits: document.getElementById('limits'),
+    inviteLink: document.getElementById('invite-link'),
+    arrowOut: document.getElementById('arrow-out'),
+    arrowIn: document.getElementById('arrow-in'),
+    lsPwr: document.getElementById('ls-pwr'),
+    lsMic: document.getElementById('ls-mic'),
+    lsLive: document.getElementById('ls-live'),
+  };
+
+  const LANG_LABEL = {};
+  for (const o of el.meLang.options) LANG_LABEL[o.value] = o.textContent;
+  const GENDER_LABEL = {};
+  for (const o of el.meGender.options) GENDER_LABEL[o.value] = o.textContent;
+
+  Meter.build(document.getElementById('meter'));
+
+  const inviteURL = location.origin + '/s/' + encodeURIComponent(sessionID);
+  el.inviteLink.textContent = inviteURL;
+  document.getElementById('copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(inviteURL).then(
+      () => notice('Link copied.'),
+      () => notice('Copy failed — select the link instead.'));
+  });
+
+  function notice(text) {
+    const d = document.createElement('div');
+    d.className = 'note';
+    d.textContent = text;
+    el.notices.appendChild(d);
+    setTimeout(() => d.remove(), 6000);
+  }
+
+  // ── caption track ───────────────────────────────────────────────────────
+  // One row per (speaker, turn). A partial arrives first and is rewritten in
+  // place as the transcript firms up, so the track reads as speech being
+  // understood rather than as a log of every revision.
+  const rows = new Map();   // key → element
+  let capCount = 0;
+
+  // Partials for the same speaker collapse onto one open row; finalising it
+  // leaves it alone and the next partial starts a fresh one.
+  function onCaption(msg, state) {
+    if (!msg.original && !msg.translated) return;
+    el.capEmpty.classList.add('hidden');
+
+    const openKey = msg.who + ':open';
+    let row = rows.get(openKey);
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'cap partial';
+      row.dataset.seat = seatOf(msg.who, state);
+      row.innerHTML = '<div class="cap-who"></div><div class="cap-src"></div><div class="cap-dst"></div>';
+      el.captions.appendChild(row);
+      rows.set(openKey, row);
+    }
+    row.querySelector('.cap-who').textContent = nameOf(msg.who, state);
+    row.querySelector('.cap-src').textContent = msg.original || '';
+    row.querySelector('.cap-dst').textContent = msg.translated || '';
+
+    if (msg.final) {
+      row.classList.remove('partial');
+      rows.delete(openKey);          // next utterance opens a new row
+      capCount++;
+      el.capCount.textContent = capCount + (capCount === 1 ? ' turn' : ' turns');
+    }
+    el.captions.scrollTop = el.captions.scrollHeight;
+
+    // Keep the transcript from growing without bound in a long session.
+    while (el.captions.children.length > 120) el.captions.removeChild(el.captions.children[1]);
+  }
+
+  function personOf(id, state) {
+    return (state.people || []).find(p => p.id === id) || null;
+  }
+  function nameOf(id, state) {
+    const p = personOf(id, state);
+    return p ? p.name : 'someone';
+  }
+  function seatOf(id, state) {
+    const p = personOf(id, state);
+    return p ? String(p.seat) : '0';
+  }
+
+  // ── render ──────────────────────────────────────────────────────────────
+  let lastState = { people: [] };
+
+  function render(s) {
+    lastState = s;
+    const me = (s.people || []).find(p => p.id === s.me);
+    const peer = (s.people || []).find(p => p.id !== s.me);
+
+    // Colour each seat by the participant actually sitting in it, so the
+    // captions and the seats agree.
+    if (me) el.seatMe.dataset.seat = String(me.seat);
+    if (peer) el.seatPeer.dataset.seat = String(peer.seat);
+
+    el.meName.textContent = s.myName || myName;
+    if (el.meLang.value !== s.myLang) el.meLang.value = s.myLang;
+    if (el.meGender.value !== s.myGender) el.meGender.value = s.myGender;
+
+    if (peer) {
+      el.peerName.textContent = peer.name;
+      el.peerLang.textContent = LANG_LABEL[peer.lang] || peer.lang;
+      el.peerGender.textContent = GENDER_LABEL[peer.gender] || peer.gender || '—';
+    } else {
+      el.peerName.textContent = 'waiting for the other person…';
+      el.peerLang.textContent = '—';
+      el.peerGender.textContent = '—';
+    }
+
+    el.seatMe.classList.toggle('speaking', !!(me && s.speaking[me.id]));
+    el.seatPeer.classList.toggle('speaking', !!(peer && s.speaking[peer.id]));
+    el.arrowOut.classList.toggle('on', !!(me && s.speaking[me.id]));
+    el.arrowIn.classList.toggle('on', !!(peer && s.speaking[peer.id]));
+
+    el.lsPwr.classList.toggle('on', s.conn === 'connected');
+    el.lsPwr.querySelector('.lamp').classList.toggle('on', s.conn === 'connected');
+    el.lsMic.classList.toggle('on', s.media === 'live');
+    el.lsMic.querySelector('.lamp').classList.toggle('on', s.media === 'live');
+    el.lsLive.classList.toggle('on', s.interpreting);
+    el.lsLive.querySelector('.lamp').classList.toggle('on', s.interpreting);
+
+    el.limits.textContent = limitsText(s.limits);
+  }
+
+  // Say up front that the session ends itself. Both legs stream audio to the
+  // speech vendor for as long as they are up, so the limits are a spend control
+  // — but from the user's side they just look like the call dropping, unless
+  // the page says so first.
+  function limitsText(lim) {
+    if (!lim) return '';
+    const parts = [];
+    if (lim.idle) parts.push('ends after ' + mins(lim.idle) + ' with nobody speaking');
+    if (lim.max) parts.push('and after ' + mins(lim.max) + ' in total');
+    return parts.length ? 'This session ' + parts.join(' ') + '.' : '';
+  }
+  function mins(sec) {
+    if (sec < 60) return sec + 's';
+    const m = Math.round(sec / 60);
+    return m + (m === 1 ? ' minute' : ' minutes');
+  }
+
+  function showEnded(reason) {
+    el.endedReason.textContent = 'Session ended — ' + reason + '.';
+    el.ended.classList.remove('hidden');
+    el.meLang.disabled = true;
+    el.meGender.disabled = true;
+    Meter.stop();
+  }
+
+  // ── joining ─────────────────────────────────────────────────────────────
+  let session = null;
+
+  // start opens the socket, which is also what takes the microphone — so it
+  // only ever runs once this person's name, language and voice are settled.
+  function start() {
+    el.prejoin.classList.add('hidden');
+    el.console.classList.remove('hidden');
+    document.querySelectorAll('.panel-live').forEach(n => n.classList.remove('hidden'));
+
+    if (wantLang) el.meLang.value = wantLang;
+    if (wantGender) el.meGender.value = wantGender;
+
+    session = window.Session(sessionID, {
+      name: myName,
+      lang: wantLang,
+      gender: wantGender,
+      onState: render,
+      onCaption: (msg) => onCaption(msg, lastState),
+      onNotice: notice,
+      onEnded: showEnded,
+      onAudioBlocked: () => el.gate.classList.remove('hidden'),
+    });
+
+    el.meLang.addEventListener('change', () => session.setLanguage(el.meLang.value));
+    el.meGender.addEventListener('change', () => session.setGender(el.meGender.value));
+
+    el.gate.addEventListener('click', () => { session.unlockAudio(); el.gate.classList.add('hidden'); });
+    // Any gesture is enough to satisfy the browser's audio gate.
+    ['pointerdown', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, () => session.unlockAudio(), { once: true }));
+
+    window.addEventListener('beforeunload', () => session.close());
+  }
+
+  if (invited) {
+    // Arrived on a shared link: ask before joining. Prefill from whatever this
+    // browser used last, so a returning user just presses Join.
+    el.prejoin.classList.remove('hidden');
+    try {
+      el.pjName.value = localStorage.getItem('interp.name') || '';
+      const l = localStorage.getItem('interp.lang'); if (l) el.pjLang.value = l;
+      const g = localStorage.getItem('interp.gender'); if (g) el.pjGender.value = g;
+    } catch (e) {}
+    el.pjName.focus();
+
+    const submit = () => {
+      myName = (el.pjName.value || '').trim() || 'guest';
+      wantLang = el.pjLang.value;
+      wantGender = el.pjGender.value;
+      try {
+        localStorage.setItem('interp.name', myName);
+        localStorage.setItem('interp.lang', wantLang);
+        localStorage.setItem('interp.gender', wantGender);
+      } catch (e) {}
+      // Put the choices in the URL so a reload rejoins with them instead of
+      // asking again.
+      const q = '?name=' + encodeURIComponent(myName)
+        + '&lang=' + encodeURIComponent(wantLang)
+        + '&gender=' + encodeURIComponent(wantGender);
+      history.replaceState(null, '', location.pathname + q);
+      start();
+    };
+    el.pjJoin.addEventListener('click', submit);
+    el.pjName.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  } else {
+    start();
+  }
+})();
+</script>
+</body>
+</html>

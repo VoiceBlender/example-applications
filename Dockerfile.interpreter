@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+#
+# Docker build for the VoiceBlender live interpreter example. Self-contained: the
+# build context is this directory, and the SDK is pulled from the public Go
+# module proxy. The web assets are baked into the binary via //go:embed, so
+# nothing extra is copied at runtime.
+#
+#   docker build -f Dockerfile.interpreter -t interpreter .
+#
+# The app needs no datastore — sessions are transient and held in memory — and
+# listens on :8093. It does need keys for the speech providers:
+#
+#   docker run --rm -p 8093:8093 \
+#     -e VOICEBLENDER_URL=http://host.docker.internal:8080/v1 \
+#     -e DEEPGRAM_API_KEY=... \
+#     -e ELEVENLABS_API_KEY=... \
+#     -e DEEPL_API_KEY=... \
+#     -e APP_ID=interpreter \
+#     interpreter
+#
+# Set TRANSLATE_PROVIDER=none to run without a DeepL key: the whole media path
+# still works and you simply hear your own words read back in a synthetic voice.
+#
+# APP_ID tags the rooms this demo creates on VoiceBlender and scopes the events
+# it acts on. Give each example a distinct value when several of them share one
+# VoiceBlender instance — see cmd/interpreter/README.md.
+
+ARG GO_VERSION=1.25
+ARG ALPINE_VERSION=3.20
+
+# ---- builder ---------------------------------------------------------------
+FROM golang:${GO_VERSION}-alpine AS builder
+
+WORKDIR /src
+
+# Pre-fetch modules in their own layer so source changes don't bust the
+# dependency cache.
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+# Now copy the full source (cmd/interpreter/web/ is embedded at build time).
+COPY . .
+
+# Static, CGO-disabled build so the binary runs on a minimal base.
+ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/interpreter ./cmd/interpreter
+
+# ---- runtime ---------------------------------------------------------------
+FROM alpine:${ALPINE_VERSION}
+
+# ca-certificates for the outbound TLS to the STT/MT/TTS vendors; tini forwards
+# SIGTERM so the VSI stream and session WebSockets disconnect cleanly on
+# `docker stop`.
+RUN apk add --no-cache ca-certificates tini && \
+    adduser -D -u 10001 -g '' interp
+
+WORKDIR /app
+COPY --from=builder /out/interpreter /app/interpreter
+RUN chown -R interp:interp /app
+
+USER interp
+EXPOSE 8093
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/app/interpreter"]

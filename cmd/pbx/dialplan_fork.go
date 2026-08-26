@@ -181,7 +181,7 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 			a.log.Warn("fork originate leg", "to", t.aor, "error", err)
 			continue
 		}
-		if legID := parseLegID(raw); legID != "" {
+		if legID := legIDOf(raw); legID != "" {
 			g.candidates[legID] = forkCand{number: t.number}
 		}
 	}

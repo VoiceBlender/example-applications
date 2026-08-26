@@ -10,6 +10,7 @@ Reference applications built on [VoiceBlender](../VoiceBlender) using the [voice
 | [ivr](./cmd/ivr/) | Multi-department IVR. UK ringback → welcome TTS → DTMF main menu → routes the caller into a department room (sales / support / billing) with looping hold music and a repeating hold message, or hands off to a Deepgram AI voice agent on `0`. |
 | [pbx](./cmd/pbx/) | **Multi-tenant SIP PBX** in one binary. Authenticated extensions (REGISTER + INVITE digest), register/IP trunks, extension↔extension and extension→external calls, a dial-by-extension IVR, and a **visual inbound dial-plan editor** (match / gather DTMF+speech / ext / ivr / forward / play / TTS / reject). **Browser WebRTC softphones** act as extra devices per extension — ring alongside the SIP phone, place calls, hold / blind-transfer (incl. "to my desk phone") / DND / mic-selector / ringtone / call-history + contacts. Handles inbound SIP REFER (accept → re-bridge), self-service tenant signup with a cross-tenant superadmin console, on-hold music, and Redis-persisted config/sessions. |
 | [ptt](./cmd/ptt/) | **Browser push-to-talk** (walkie-talkie). Username-only login → create public or private rooms → hold a button (or Space) to talk over WebRTC. **Single-speaker floor control** (a second presser gets "busy") and **fully on-demand media**: the VoiceBlender room and every WebRTC leg are created on the press and torn down on the release, so nothing is allocated while a room is quiet. Private rooms use a shareable invite code/link; live presence + "who's talking"; Redis-persisted users/sessions/rooms. |
+| [interpreter](./cmd/interpreter/) | **Live simultaneous interpreter.** Two people, two languages, one WebRTC conversation — each hears **only** the other's translated voice, with live captions of the original and the translation. Cascades Deepgram Flux STT (or Speechmatics, for languages Flux cannot do) → DeepL → ElevenLabs Flash TTS, and uses the room **routing matrix** to silence the direct path between the participants plus per-leg `leg_tts` to inject each translation privately. Hides the synthesis cost behind the speaker's last few hundred milliseconds by translating on Flux's **eager end-of-turn**, staging the audio with `leg_tts_preflight`, and committing it the instant the turn ends (~250–450 ms speaker-stops-to-listener-hears). Each speaker picks a voice gender and is heard in a matching voice on the far side. Optional static login, and idle/duration session limits so an abandoned tab stops billing STT. No datastore. |
 
 ## Layout
 
@@ -46,6 +47,10 @@ Each example has its own multi-stage Dockerfile that produces a single self-cont
   ```bash
   docker build -f Dockerfile.ptt -t ptt .
   ```
+- **interpreter** — [`Dockerfile.interpreter`](./Dockerfile.interpreter) (no datastore; listens on `:8093`):
+  ```bash
+  docker build -f Dockerfile.interpreter -t interpreter .
+  ```
 
 Typical run:
 
@@ -65,7 +70,7 @@ Mount a custom hold-music MP3 without rebuilding:
 
 ### Docker Compose
 
-A worked [`compose.yaml`](./compose.yaml) runs **two apps against one VoiceBlender** — the contact centre and push-to-talk — plus Caddy and Redis.
+A worked [`compose.yaml`](./compose.yaml) runs **three apps against one VoiceBlender** — the contact centre, push-to-talk and the live interpreter — plus Caddy and Redis.
 
 ```bash
 docker compose up --build
@@ -76,23 +81,26 @@ docker compose up --build
 | `http://localhost/` | contact-centre — supervisor panel |
 | `http://localhost/agent` | contact-centre — agent panel |
 | `http://ptt.localhost/` | push-to-talk |
+| `http://interp.localhost/` | live interpreter |
 
 Both hostnames are served by Caddy on the **same ports** (80/443) — it routes by `Host`, not by port. Browsers resolve `*.localhost` to `127.0.0.1` themselves, so no `/etc/hosts` entry is needed.
 
 The compose file:
 
-- Brings up four services: **caddy** (the only one with host ports — `80:80` and `443:443`, override with `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT`), **contact-centre** and **ptt** (both internal-only, fronted by Caddy), and **redis**.
-- Points **both apps at the same VoiceBlender** (`host.docker.internal:8080`) and keeps them apart with `APP_ID`: each tags the rooms and browser legs it creates, and filters the VSI event stream to its own. See each app's README.
+- Brings up five services: **caddy** (the only one with host ports — `80:80` and `443:443`, override with `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT`), **contact-centre**, **ptt** and **interpreter** (all internal-only, fronted by Caddy), and **redis**.
+- Points **all three apps at the same VoiceBlender** (`host.docker.internal:8080`) and keeps them apart with `APP_ID`: each tags the rooms and browser legs it creates, and filters the VSI event stream to its own. See each app's README.
+- The **interpreter needs no Redis** but does need outbound internet and API keys for its three speech hops (`DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `DEEPL_API_KEY`). It defaults to `TRANSLATE_PROVIDER=none` in compose so the stack comes up and the media path works without an MT account — set `TRANSLATE_PROVIDER=deepl` once you have a key.
+- The interpreter bills **per minute of wall-clock time** (two live legs = two continuously-streaming STT sessions), so it ships with an idle timeout (`INTERP_IDLE_TIMEOUT`, default 5m) and a hard duration cap (`INTERP_MAX_DURATION`, default 1h). Set `INTERP_PASSWORD` before exposing it — without one there is no login and anyone who finds it can spend your speech budget.
 - **Redis is no longer opt-in** — ptt requires it (users, sessions, rooms). The apps use separate databases (contact-centre's call log → `0`, ptt → `1`). The contact centre's call log still defaults to memory; set `CALL_LOG_BACKEND=redis` to persist it.
 - Lists **every** env var each app understands inline, with the same defaults as their `.env.example` files, so it doubles as the canonical reference.
 
-**Microphone note:** push-to-talk needs `getUserMedia`, which browsers only grant in a *secure context*. `http://ptt.localhost` qualifies (localhost is exempt), but any other plain-HTTP hostname does not — to reach it over the network you need HTTPS, i.e. set `CADDY_PTT_DOMAIN`.
+**Microphone note:** push-to-talk and the interpreter both need `getUserMedia`, which browsers only grant in a *secure context*. `http://ptt.localhost` and `http://interp.localhost` qualify (localhost is exempt), but any other plain-HTTP hostname does not — to reach them over the network you need HTTPS, i.e. set `CADDY_PTT_DOMAIN` / `CADDY_INTERP_DOMAIN`.
 
 ### Caddy reverse proxy
 
-[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service and defines **two sites on the same ports**, told apart by hostname: `CADDY_DOMAIN` (default catch-all `:80`) → `contact-centre:8090`, and `CADDY_PTT_DOMAIN` (default `ptt.localhost`) → `ptt:8092`. Caddy matches the most specific site first, so the named ptt site wins for its own host while the contact centre remains the catch-all.
+[`Caddyfile`](./Caddyfile) is mounted into the `caddy` service and defines **three sites on the same ports**, told apart by hostname: `CADDY_DOMAIN` (default catch-all `:80`) → `contact-centre:8090`, `CADDY_PTT_DOMAIN` (default `ptt.localhost`) → `ptt:8092`, and `CADDY_INTERP_DOMAIN` (default `interp.localhost`) → `interpreter:8093`. Caddy matches the most specific site first, so each named site wins for its own host while the contact centre remains the catch-all.
 
-WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`, `/api/ptt/stream`, `/api/lobby/stream`) pass through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config.
+WebSocket upgrades (`/api/calls/stream`, `/api/agent/stream`, `/api/ptt/stream`, `/api/lobby/stream`, `/api/interpreter/stream`) pass through transparently — Caddy v2's `reverse_proxy` handles the `Upgrade` header without extra config.
 
 ### Public deployment: both apps on :443, one domain each
 

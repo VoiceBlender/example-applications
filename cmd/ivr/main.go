@@ -43,7 +43,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -655,11 +654,8 @@ func chooseCodec(prefs []string, offered []voiceblender.OfferedCodec) string {
 		return ""
 	}
 	offeredByName := make(map[string]string, len(offered))
-	for _, raw := range offered {
-		var c struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &c); err != nil || c.Name == "" {
+	for _, c := range offered {
+		if c.Name == "" {
 			continue
 		}
 		offeredByName[strings.ToLower(c.Name)] = c.Name

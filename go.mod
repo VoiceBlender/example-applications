@@ -3,7 +3,7 @@ module github.com/VoiceBlender/example-applications
 go 1.25.0
 
 require (
-	github.com/VoiceBlender/voiceblender-go v0.11.1
+	github.com/VoiceBlender/voiceblender-go v0.12.1
 	github.com/coder/websocket v1.8.15
 	github.com/redis/go-redis/v9 v9.19.0
 	golang.org/x/crypto v0.54.0

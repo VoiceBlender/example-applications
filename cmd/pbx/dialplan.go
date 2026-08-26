@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -368,7 +367,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		a.hangup(aLeg, "unavailable")
 		return
 	}
-	bLeg := parseLegID(raw)
+	bLeg := legIDOf(raw)
 	if bLeg == "" {
 		a.log.Error("outbound leg has no id", "to", toURI)
 		a.hangup(aLeg, "unavailable")
@@ -590,13 +589,6 @@ func (a *app) hangup(legID, reason string) {
 	}
 }
 
-// parseLegID extracts the "id" field from a create_leg response.
-func parseLegID(raw json.RawMessage) string {
-	var v struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return ""
-	}
-	return v.ID
-}
+// legIDOf names the id of a leg returned by create_leg, so the "did we actually
+// get a leg back" check at each call site reads the same way.
+func legIDOf(leg voiceblender.Leg) string { return leg.ID }

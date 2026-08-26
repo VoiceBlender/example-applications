@@ -1,40 +1,47 @@
-# Docker Compose example for the VoiceBlender contact-centre and push-to-talk apps.
+# Docker Compose example for the VoiceBlender contact-centre, push-to-talk and
+# live-interpreter apps.
 #
-# Both apps talk to ONE VoiceBlender — the existing server on the host. They stay
+# All three talk to ONE VoiceBlender — the existing server on the host. They stay
 # out of each other's way with `app_id`: every room and browser leg they create is
 # tagged with it, and each filters the VSI event stream down to its own. See
 # APP_ID below and each app's README.
 #
 # Topology:
 #
-# Caddy fronts BOTH apps on the same ports (80/443) and routes by HOSTNAME:
+# Caddy fronts ALL THREE apps on the same ports (80/443) and routes by HOSTNAME:
 #
 #     http://localhost/           →  contact-centre   (catch-all site)
 #     http://ptt.localhost/       →  ptt              (named site)
+#     http://interp.localhost/    →  interpreter      (named site)
 #
-#     browser                        browser
-#        │ http://localhost             │ http://ptt.localhost
-#        │ (or https://$CADDY_DOMAIN)   │ (or https://$CADDY_PTT_DOMAIN)
-#        ▼                              ▼
-#     ┌───────────────────────────────────────────┐
-#     │            caddy (80 / 443)               │
-#     │       routes by Host header, not port     │
-#     └────────┬────────────────────────┬─────────┘
-#              │ contact-centre:8090    │ ptt:8092
-#              ▼                        ▼
-#     ┌─────────────────┐      ┌─────────────────┐
-#     │  contact-centre │      │       ptt       │
-#     │  app_id=        │      │  app_id=ptt     │
-#     │  contact-centre │      │                 │
-#     └────────┬────────┘      └────────┬────────┘
-#              │                        │
-#              │   ┌────────────────────┘
-#              ▼   ▼
-#     ┌─────────────────┐      ┌────────────────────────────────┐
-#     │      redis      │      │ VoiceBlender (on the host)      │
-#     │  db 0: call log │      │ host.docker.internal:8080       │
-#     │  db 1: ptt      │      │ …shared by BOTH apps            │
-#     └─────────────────┘      └────────────────────────────────┘
+#     browser              browser                browser
+#        │ http://localhost   │ http://ptt.local…    │ http://interp.local…
+#        ▼                    ▼                      ▼
+#     ┌─────────────────────────────────────────────────────────┐
+#     │                  caddy (80 / 443)                       │
+#     │             routes by Host header, not port             │
+#     └──────┬─────────────────┬────────────────────┬───────────┘
+#            │ contact-centre  │ ptt:8092           │ interpreter:8093
+#            │ :8090           │                    │
+#            ▼                 ▼                    ▼
+#     ┌───────────────┐ ┌───────────────┐ ┌──────────────────────┐
+#     │ contact-centre│ │      ptt      │ │     interpreter      │
+#     │ app_id=       │ │  app_id=ptt   │ │  app_id=interpreter  │
+#     │ contact-centre│ │               │ │  (no datastore)      │
+#     └──────┬────────┘ └──────┬────────┘ └──────────┬───────────┘
+#            │                 │                     │
+#            ▼                 ▼                     │
+#     ┌─────────────────┐                            │
+#     │      redis      │                            │
+#     │  db 0: call log │      ┌─────────────────────▼──────────┐
+#     │  db 1: ptt      │      │ VoiceBlender (on the host)     │
+#     └─────────────────┘      │ host.docker.internal:8080      │
+#                              │ …shared by ALL THREE apps      │
+#                              └────────────────────────────────┘
+#
+# The interpreter additionally reaches OUT to three speech vendors (Deepgram for
+# transcription, DeepL for translation, ElevenLabs for synthesis), so unlike the
+# other two it needs API keys and outbound internet.
 #
 # Every environment variable the apps accept is listed below — uncomment
 # and tweak as needed. Sensible defaults are set; `letmein` passwords
@@ -236,6 +243,76 @@ services:
       retries: 3
       start_period: 5s
 
+  # ------------------------------------------------- Live interpreter ----
+  # Two-party interpreted call: each participant hears only the other's
+  # translated voice. Needs no datastore — sessions are transient and held in
+  # memory — but does need keys for the three speech hops.
+  interpreter:
+    build:
+      context: .
+      dockerfile: Dockerfile.interpreter
+    image: interpreter-example:latest
+    container_name: interpreter-example
+    # No host port mapping — Caddy fronts this service too.
+    expose:
+      - "8093"
+    environment:
+      # The *same* VoiceBlender the other apps use, kept apart by app_id.
+      VOICEBLENDER_URL: "http://host.docker.internal:8080/v1"
+      LISTEN_ADDR: ":8093"
+      APP_ID: "${INTERP_APP_ID:-interpreter}"
+
+      # Speech to text. deepgram_flux is the only provider that reports EAGER
+      # end of turn, which is what lets the app translate and synthesize while
+      # the speaker is still finishing. Set the threshold to 0 to switch that
+      # speculation off and hear the extra half-second it costs.
+      # The transcriber is chosen per participant, by language: Flux covers ten
+      # languages and is the fast one; Speechmatics covers pl/uk/tr/ko/zh. Set
+      # both keys and a mixed-language call uses both engines at once.
+      STT_PROVIDER: "${INTERP_STT_PROVIDER:-deepgram_flux}"
+      STT_FALLBACK_PROVIDER: "${INTERP_STT_FALLBACK:-speechmatics}"
+      DEEPGRAM_API_KEY: "${DEEPGRAM_API_KEY:-}"
+      SPEECHMATICS_API_KEY: "${SPEECHMATICS_API_KEY:-}"
+      STT_EAGER_EOT_THRESHOLD: "${INTERP_EAGER_EOT:-0.7}"
+
+      # Text to speech. Flash is the low-latency multilingual model, so one
+      # voice covers every language the app offers.
+      TTS_PROVIDER: "${INTERP_TTS_PROVIDER:-elevenlabs}"
+      TTS_MODEL_ID: "${INTERP_TTS_MODEL:-eleven_flash_v2_5}"
+      ELEVENLABS_API_KEY: "${ELEVENLABS_API_KEY:-}"
+
+      # Translation. VoiceBlender's STT providers do not translate, so this hop
+      # runs in the app. TRANSLATE_PROVIDER=none needs no key and reads your own
+      # words back — enough to prove the media path without an MT account.
+      TRANSLATE_PROVIDER: "${TRANSLATE_PROVIDER:-none}"
+      DEEPL_API_KEY: "${DEEPL_API_KEY:-}"
+
+      # One shared static credential guards the console. Empty password = no
+      # login at all, which is the default here so the stack comes up ready to
+      # try — set INTERP_PASSWORD before putting this anywhere reachable, or
+      # strangers spend your STT/TTS budget.
+      AUTH_USERNAME: "${INTERP_USERNAME:-interpreter}"
+      AUTH_PASSWORD: "${INTERP_PASSWORD:-}"
+
+      # Spend controls. Both legs stream audio to the STT vendor continuously
+      # while they are up, so an abandoned tab bills by the minute. 0 disables.
+      SESSION_IDLE_TIMEOUT: "${INTERP_IDLE_TIMEOUT:-5m}"
+      SESSION_MAX_DURATION: "${INTERP_MAX_DURATION:-1h}"
+      SESSION_EMPTY_TIMEOUT: "${INTERP_EMPTY_TIMEOUT:-5m}"
+
+      VSI_LOG: "${VSI_LOG:-1}"
+    extra_hosts:
+      # Linux needs this so host.docker.internal resolves.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      # /login is always served, with or without the gate enabled.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8093/login"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   # ---------------------------------------------------- Caddy front-end --
   # Reverse proxy on the user-facing port. Reverse_proxy in Caddy v2
   # handles WebSocket upgrades transparently, so /api/calls/stream and
@@ -267,6 +344,10 @@ services:
       # Anywhere else it won't — set a real hostname (e.g. ptt.example.com) and
       # Caddy serves it over HTTPS on 443 next to CADDY_DOMAIN.
       CADDY_PTT_DOMAIN: "${CADDY_PTT_DOMAIN:-http://ptt.localhost}"
+      # Live interpreter — a third site on the same ports. Same secure-context
+      # rule as ptt: it needs a microphone, so `*.localhost` is fine locally and
+      # anything else needs HTTPS.
+      CADDY_INTERP_DOMAIN: "${CADDY_INTERP_DOMAIN:-http://interp.localhost}"
       CADDY_ACME_EMAIL: "${CADDY_ACME_EMAIL:-no-reply@example.invalid}"
       CADDY_ACME_CA: "${CADDY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
     volumes:
@@ -277,6 +358,8 @@ services:
       contact-centre:
         condition: service_started
       ptt:
+        condition: service_started
+      interpreter:
         condition: service_started
     restart: unless-stopped
 

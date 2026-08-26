@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpreter · sign in</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap" style="max-width:400px">
+  <div class="brand">VoiceBlender · example</div>
+  <h1 class="title">Live interpreter</h1>
+  <p class="lede">Sign in to start or join a session.</p>
+
+  <div class="card">
+    <div class="head">Sign in</div>
+    <div class="body">
+      {{if .Failed}}<div class="err">Wrong username or password.</div>{{end}}
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus>
+        <label for="password" style="margin-top:14px">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password">
+        <button type="submit" style="margin-top:18px; width:100%">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <p class="hint">
+    One shared credential guards the demo. You still choose a display name for
+    the call itself.
+  </p>
+</div>
+</body>
+</html>
