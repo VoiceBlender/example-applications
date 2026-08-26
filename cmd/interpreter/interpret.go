@@ -80,7 +80,13 @@ func (i *interpreter) onTurn(e *voiceblender.STTTurnEvent) {
 
 	switch e.TurnEvent {
 	case "start_of_turn":
+		speaker.resetTurnWarning()
 		s.broadcast(map[string]any{"type": "speaking", "who": speaker.id, "on": true})
+
+	case "update":
+		// Mid-turn progress. We drive captions from stt.text instead, so there
+		// is nothing to do — except notice when a turn never ends.
+		i.checkStuckTurn(s, speaker, e)
 
 	case "eager_end_of_turn":
 		// Only Deepgram Flux emits this, and only when eager_eot_threshold is
@@ -92,9 +98,37 @@ func (i *interpreter) onTurn(e *voiceblender.STTTurnEvent) {
 		i.discardStaged(ctx, s, speaker, e.TurnIndex)
 
 	case "end_of_turn":
+		speaker.resetTurnWarning()
 		s.broadcast(map[string]any{"type": "speaking", "who": speaker.id, "on": false})
 		i.finishTurn(ctx, s, speaker, listener, e.TurnIndex, e.Text)
 	}
+}
+
+// stuckTurnMs is how long a single turn may run before we call it stuck. Real
+// speech turns are seconds; anything past this is the transcriber never seeing
+// a silence to end on.
+const stuckTurnMs = 60_000
+
+// checkStuckTurn warns when one turn has been open far too long.
+//
+// Deepgram forces a turn to end after eot_timeout_ms of SILENCE, and that timer
+// resets on speech — so a turn that runs for minutes means the microphone is
+// feeding continuous audio: an open mic in a noisy room, or (very commonly when
+// testing two tabs on one machine) the speakers echoing the interpreted voice
+// back in. While a turn stays open nothing is ever translated or spoken, and
+// without this the only symptom is silence.
+func (i *interpreter) checkStuckTurn(s *session, speaker *participant, e *voiceblender.STTTurnEvent) {
+	span := e.AudioWindowEndMs - e.AudioWindowStartMs
+	if span < stuckTurnMs || !speaker.warnTurnOnce(e.TurnIndex) {
+		return
+	}
+	i.a.log.Warn("a speech turn has run for minutes without ending — nothing will be interpreted "+
+		"until it does. The microphone is probably picking up continuous sound (an open mic, or "+
+		"speaker output echoing back). Use headphones, or lower STT_EOT_TIMEOUT_MS.",
+		"session", s.id, "participant", speaker.name,
+		"turn", e.TurnIndex, "open_for_s", span/1000, "eot_confidence", e.EndOfTurnConfidence)
+	speaker.send(map[string]any{"type": "warning",
+		"message": "your microphone has been picking up sound continuously — nothing can be interpreted until you pause. Try headphones."})
 }
 
 // onText handles a transcript fragment. Its main job is the live caption track;

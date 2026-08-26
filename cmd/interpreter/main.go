@@ -49,7 +49,12 @@
 //	                         languages Flux cannot do are simply not offered
 //	STT_API_KEY              Fallback key for either, if you use only one
 //	STT_EAGER_EOT_THRESHOLD  Flux eager end-of-turn confidence, 0.3–0.9 (default 0.7).
-//	                         0 disables the speculative path entirely.
+//	                         0 disables the speculative path entirely. Deepgram
+//	                         requires it to be <= STT_EOT_THRESHOLD.
+//	STT_EOT_THRESHOLD        Confidence needed to end a turn, 0.5–0.9
+//	                         (unset = Deepgram's default of 0.7)
+//	STT_EOT_TIMEOUT_MS       Silence that forces a turn to end, 500–60000
+//	                         (unset = Deepgram's default of 5000)
 //
 //	TTS_PROVIDER             elevenlabs (default)
 //	TTS_MODEL_ID             default eleven_flash_v2_5
@@ -94,10 +99,16 @@ type config struct {
 	// sttProvider is the PREFERRED transcriber; sttFallback covers the
 	// languages it cannot do. The choice is made per participant, per language
 	// — see config.providerForLang.
-	sttProvider  string
-	sttFallback  string
-	sttKeys      map[string]string // provider → API key
-	eagerEOT     float64           // 0 disables the preflight/commit path
+	sttProvider string
+	sttFallback string
+	sttKeys     map[string]string // provider → API key
+	eagerEOT    float64           // 0 disables the preflight/commit path
+	// eotThreshold / eotTimeoutMs are Flux's turn-detection knobs. Zero leaves
+	// Deepgram's defaults (0.7 confidence, and a 5 s silence timeout that forces
+	// the turn to end). Raise the timeout for speakers who pause a lot; lower it
+	// to make the interpreter cut in sooner.
+	eotThreshold float64
+	eotTimeoutMs int
 	ttsProvider  string
 	ttsModelID   string
 	ttsAPIKey    string
@@ -151,6 +162,8 @@ func main() {
 		sttFallback:  envOr("STT_FALLBACK_PROVIDER", "speechmatics"),
 		sttKeys:      sttKeysFromEnv(envOr("STT_PROVIDER", "deepgram_flux")),
 		eagerEOT:     envFloat("STT_EAGER_EOT_THRESHOLD", 0.7),
+		eotThreshold: envFloat("STT_EOT_THRESHOLD", 0),
+		eotTimeoutMs: envInt("STT_EOT_TIMEOUT_MS", 0),
 		ttsProvider:  envOr("TTS_PROVIDER", "elevenlabs"),
 		ttsModelID:   envOr("TTS_MODEL_ID", "eleven_flash_v2_5"),
 		ttsAPIKey:    firstEnv("TTS_API_KEY", "ELEVENLABS_API_KEY"),
@@ -163,6 +176,19 @@ func main() {
 		maxDuration:  envDuration("SESSION_MAX_DURATION", time.Hour),
 		idleTimeout:  envDuration("SESSION_IDLE_TIMEOUT", 5*time.Minute),
 		emptyTimeout: envDuration("SESSION_EMPTY_TIMEOUT", 5*time.Minute),
+	}
+
+	// Deepgram requires eager_eot_threshold <= eot_threshold and rejects the
+	// connection otherwise — which shows up as a leg that is simply never
+	// transcribed. Clamp rather than let that happen silently.
+	effectiveEOT := cfg.eotThreshold
+	if effectiveEOT == 0 {
+		effectiveEOT = 0.7 // Deepgram's default
+	}
+	if cfg.eagerEOT > effectiveEOT {
+		log.Warn("STT_EAGER_EOT_THRESHOLD must not exceed STT_EOT_THRESHOLD — clamping",
+			"requested", cfg.eagerEOT, "clamped_to", effectiveEOT)
+		cfg.eagerEOT = effectiveEOT
 	}
 
 	tr, err := newTranslator(cfg.translateVia, log)
@@ -476,6 +502,19 @@ func sttKeysFromEnv(preferred string) map[string]string {
 	return keys
 }
 
+// envInt reads an integer env var, falling back to def when unset or unparseable.
+func envInt(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
 // envDuration reads a Go duration string ("90s", "10m", "1h30m") from the
 // environment. An explicit "0" disables the limit; anything unparseable falls
 // back to the default rather than silently disabling a spend control.
@@ -501,14 +540,18 @@ func (a *app) logVSIFrame(dir string, data []byte) {
 	a.log.Info("vsi", "dir", dir, "type", env.Type, "frame", string(data))
 }
 
-// vsiFrameLogEnabled reports whether raw VSI frame logging is on. Default on;
-// VSI_LOG=0/false/off/no disables it.
+// vsiFrameLogEnabled reports whether raw VSI frame logging is on.
+//
+// Default OFF here, unlike the push-to-talk example. That app's VSI traffic is
+// sparse — a burst of frames per button press — but this one runs two
+// transcribers continuously, and Flux alone emits a `stt.turn` update roughly
+// every 200 ms per leg. Logging every frame buries everything else.
 func vsiFrameLogEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("VSI_LOG"))) {
-	case "0", "false", "off", "no":
-		return false
+	case "1", "true", "on", "yes":
+		return true
 	}
-	return true
+	return false
 }
 
 // isVSINotFound reports whether err is a VSI error with code 404.

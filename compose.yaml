@@ -305,7 +305,10 @@ services:
       SESSION_MAX_DURATION: "${INTERP_MAX_DURATION:-1h}"
       SESSION_EMPTY_TIMEOUT: "${INTERP_EMPTY_TIMEOUT:-5m}"
 
-      VSI_LOG: "${VSI_LOG:-1}"
+      # Raw VSI frame logging. OFF by default for this app: two live
+      # transcribers emit a turn update roughly every 200 ms per leg, which
+      # buries every other log line. Set to 1 to inspect the hot path.
+      VSI_LOG: "${INTERP_VSI_LOG:-0}"
     extra_hosts:
       # Linux needs this so host.docker.internal resolves.
       - "host.docker.internal:host-gateway"

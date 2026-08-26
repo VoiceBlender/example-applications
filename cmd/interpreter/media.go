@@ -371,6 +371,8 @@ func (m *mediaManager) sttPayload(legID, langCode string) (voiceblender.STTStart
 		// flux-general-multi, which is the only Flux model that accepts hints.
 		p.LanguageHints = []string{code}
 		p.EagerEotThreshold = m.a.cfg.eagerEOT
+		p.EotThreshold = m.a.cfg.eotThreshold
+		p.EotTimeoutMs = m.a.cfg.eotTimeoutMs
 	} else {
 		p.Language = code
 	}

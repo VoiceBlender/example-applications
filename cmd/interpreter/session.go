@@ -89,7 +89,10 @@ type participant struct {
 	// that lands late can tell it is stale instead of staging audio nobody will
 	// ever commit.
 	maxDone int
-	c       *conn
+	// warnedTurn latches the stuck-turn warning, stored as turn_index+1 so the
+	// zero value means "not warned" and turn 0 is still representable.
+	warnedTurn int
+	c          *conn
 
 	// sttMu serializes transcriber start/stop for this leg. mu is released
 	// across the VSI round trip, so without this a leg connecting and a
@@ -172,6 +175,25 @@ func (p *participant) getLang() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.lang
+}
+
+// warnTurnOnce reports whether this is the first stuck-turn warning for a turn,
+// so a wedged microphone produces one line rather than one every 200 ms.
+func (p *participant) warnTurnOnce(turnIndex int) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.warnedTurn == turnIndex+1 {
+		return false
+	}
+	p.warnedTurn = turnIndex + 1
+	return true
+}
+
+// resetTurnWarning clears the stuck-turn latch at a real turn boundary.
+func (p *participant) resetTurnWarning() {
+	p.mu.Lock()
+	p.warnedTurn = 0
+	p.mu.Unlock()
 }
 
 // runningLang is the language the transcriber is actually running in, which is

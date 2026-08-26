@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"testing"
+
+	voiceblender "github.com/VoiceBlender/voiceblender-go"
 )
 
 // The bug this file exists for.
@@ -281,5 +283,70 @@ func TestConcurrentStartsConvergeOnTheSelectedLanguage(t *testing.T) {
 	// Whatever the interleaving, the running language must match the selection.
 	if got, want := alice.runningLang(), alice.getLang(); got != want {
 		t.Errorf("transcribing %q while %q is selected", got, want)
+	}
+}
+
+// A turn that never ends means nothing is ever interpreted, and the only
+// natural symptom is silence — so it has to be reported.
+func TestStuckTurnIsReportedOnce(t *testing.T) {
+	a, _, _, _, alice, _ := newTestApp(t)
+
+	long := func(idx int, spanMs int) *voiceblender.STTTurnEvent {
+		e := turn("leg-alice", "update", idx, "")
+		e.AudioWindowStartMs = 1000
+		e.AudioWindowEndMs = 1000 + spanMs
+		return e
+	}
+
+	// A normal turn says nothing.
+	a.interp.onTurn(long(0, 4_000))
+	if len(drain(alice)) != 0 {
+		t.Error("warned about a four-second turn")
+	}
+
+	// A turn running for minutes warns — once, not on every update.
+	a.interp.onTurn(long(0, 5*60_000))
+	a.interp.onTurn(long(0, 6*60_000))
+	a.interp.onTurn(long(0, 7*60_000))
+	if n := len(drain(alice)); n != 1 {
+		t.Errorf("sent %d warnings for one stuck turn, want exactly 1", n)
+	}
+
+	// A fresh turn re-arms the warning.
+	a.interp.onTurn(turn("leg-alice", "start_of_turn", 1, ""))
+	a.interp.onTurn(long(1, 5*60_000))
+	if n := len(drain(alice)); n != 1 {
+		t.Errorf("sent %d warnings for the next stuck turn, want 1", n)
+	}
+}
+
+// drain collects the warning messages queued to a participant.
+func drain(p *participant) []string {
+	var out []string
+	for {
+		select {
+		case msg := <-p.c.outbox:
+			if m, ok := msg.(map[string]any); ok && m["type"] == "warning" {
+				out = append(out, m["message"].(string))
+			}
+		default:
+			return out
+		}
+	}
+}
+
+// `update` carries mid-turn progress we deliberately ignore — captions come
+// from stt.text — so it must never trigger a translation.
+func TestUpdateEventsDoNotSpeak(t *testing.T) {
+	a, fake, tr, _, _, _ := newTestApp(t)
+
+	for i := 0; i < 5; i++ {
+		a.interp.onTurn(turn("leg-alice", "update", 0, "half a sentence"))
+	}
+	if n := fake.count("tts") + fake.count("preflight"); n != 0 {
+		t.Errorf("mid-turn updates produced %d synthesis request(s)", n)
+	}
+	if tr.count() != 0 {
+		t.Errorf("mid-turn updates triggered %d translation(s)", tr.count())
 	}
 }

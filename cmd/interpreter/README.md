@@ -227,6 +227,34 @@ places: a startup `WARN`, a permanent banner on the session page, and
 and `.env.example`, and it **refuses to start** without `DEEPL_API_KEY` rather
 than quietly falling back to doing nothing. Choose `none` deliberately.
 
+### If nothing is ever interpreted, check for a stuck turn
+
+Deepgram ends a turn once it hears **5 s of silence** (`eot_timeout_ms`), and
+that timer resets on speech. So a microphone picking up continuous sound holds a
+single turn open forever, and while it is open nothing is transcribed as
+finished — so nothing is translated or spoken. The natural symptom is silence,
+which is indistinguishable from a broken pipeline.
+
+The usual cause when testing is **two tabs on one machine with speakers on**:
+the interpreted voice plays out loud and goes straight back into the microphone.
+Use headphones.
+
+The app now notices and says so, in the log and to that participant:
+
+```
+WARN a speech turn has run for minutes without ending — nothing will be
+     interpreted until it does … open_for_s=690 eot_confidence=0.0001
+```
+
+Tune it with `STT_EOT_TIMEOUT_MS` (500–60000, default 5000) and
+`STT_EOT_THRESHOLD` (0.5–0.9, default 0.7). Deepgram requires
+`STT_EAGER_EOT_THRESHOLD <= STT_EOT_THRESHOLD` and rejects the connection
+otherwise — the app clamps and warns rather than letting that fail silently.
+
+**`VSI_LOG` is off by default here.** Flux emits a `stt.turn` update about every
+200 ms per leg, so raw frame logging buries everything else. Turn it on briefly
+when you want to watch the preflight/commit hot path.
+
 ## Access and cost control
 
 Two features exist for the same reason: this app spends money per minute of
