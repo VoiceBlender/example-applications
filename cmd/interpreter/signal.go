@@ -101,6 +101,9 @@ func (a *app) handleStream(w http.ResponseWriter, r *http.Request) {
 		// appearing to break when it does.
 		"idle_timeout_s": int(a.cfg.idleTimeout.Seconds()),
 		"max_duration_s": int(a.cfg.maxDuration.Seconds()),
+		// So the page can say plainly that nothing is being translated, rather
+		// than leaving someone to conclude their language setting is broken.
+		"translating": a.tr.Translates(),
 	})
 	a.pushPresence(s)
 

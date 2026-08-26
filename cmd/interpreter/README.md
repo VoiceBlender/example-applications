@@ -89,7 +89,7 @@ difference — the same path then costs roughly 700–1100 ms.
 |---|---|---|
 | STT | `deepgram_flux` | The only provider that reports **eager** end of turn — the whole low-latency design hangs off it. Covers ten languages. No `language` parameter: it takes `language_hint`, and hints *bias* detection rather than pinning it. |
 | STT (fallback) | `speechmatics` | Used automatically for languages Flux cannot do. Pins the language rather than biasing it, at the cost of the eager path. Chosen per participant — see *Languages* below. |
-| MT | `deepl` | VoiceBlender's STT providers transcribe but do **not** translate, so this hop lives in the app behind a small `translator` interface (see `translate.go`). `TRANSLATE_PROVIDER=none` runs the whole media path with no key. |
+| MT | `deepl` | VoiceBlender's STT providers transcribe but do **not** translate, so this hop lives in the app behind a small `translator` interface (see `translate.go`). `TRANSLATE_PROVIDER=none` runs the whole media path with no key — but see the warning below. |
 | TTS | `elevenlabs` / `eleven_flash_v2_5` | Flash is the low-latency model, and it is multilingual — so one voice per speaker covers every language here. Which voice is chosen by the speaker's declared gender; see *Voices* below. |
 
 Adding another MT backend is one file and one `case` in `newTranslator`; nothing
@@ -214,6 +214,19 @@ changes — but anything already staged for the peer is discarded, so a single
 sentence never arrives in the wrong voice. Because the model is multilingual, the
 voice does not change when someone switches language.
 
+### `TRANSLATE_PROVIDER=none` looks exactly like a broken language setting
+
+The passthrough runs every hop except the translation, so each participant hears
+the other's **original words** read aloud by the synthesizer. Pick Polish, have
+the other person speak English, and you hear English — not because the language
+setting is wrong, but because nothing is being translated.
+
+That is the most confusing way this app can fail, so it is now stated in three
+places: a startup `WARN`, a permanent banner on the session page, and
+`translating: false` on the signalling socket. `deepl` is the default in compose
+and `.env.example`, and it **refuses to start** without `DEEPL_API_KEY` rather
+than quietly falling back to doing nothing. Choose `none` deliberately.
+
 ## Access and cost control
 
 Two features exist for the same reason: this app spends money per minute of
@@ -311,6 +324,9 @@ To try it with no MT account at all:
 ```bash
 TRANSLATE_PROVIDER=none go run ./cmd/interpreter
 ```
+
+You will hear your own words read back rather than a translation — every hop
+except the translation is exercised. The page says so while this mode is on.
 
 Every hop still runs; you just hear your own words read back in the other seat's
 voice, which is enough to confirm the routing, the STT and the TTS all work.

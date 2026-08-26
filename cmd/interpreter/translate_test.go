@@ -23,7 +23,8 @@ func (c *countingTranslator) Translate(_ context.Context, text, _, _ string) (st
 	}
 	return "T:" + text, nil
 }
-func (c *countingTranslator) Name() string { return "counting" }
+func (c *countingTranslator) Name() string     { return "counting" }
+func (c *countingTranslator) Translates() bool { return true }
 func (c *countingTranslator) hits() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -173,5 +174,36 @@ func TestEveryLanguageIsFullySpelled(t *testing.T) {
 	// An unknown code must degrade, not panic or return an empty language.
 	if lookupLang("klingon").Code != defaultLang {
 		t.Error("unknown language should fall back to the default")
+	}
+}
+
+// The passthrough must declare itself, and a real backend must not.
+//
+// Hearing the other person's own words read back is indistinguishable from a
+// broken language setting, so "am I actually translating?" has to be a fact the
+// startup log and the page can both state plainly.
+func TestPassthroughDeclaresItIsNotTranslating(t *testing.T) {
+	tr, err := newTranslator("none", nil)
+	if err != nil {
+		t.Fatalf("none: %v", err)
+	}
+	if tr.Translates() {
+		t.Error("the passthrough claims to translate")
+	}
+
+	t.Setenv("DEEPL_API_KEY", "k")
+	real, err := newTranslator("deepl", nil)
+	if err != nil {
+		t.Fatalf("deepl: %v", err)
+	}
+	if !real.Translates() {
+		t.Error("the DeepL backend claims not to translate")
+	}
+	// The cache wrapper must not hide the answer.
+	if !(&cachingTranslator{inner: real}).Translates() {
+		t.Error("the cache wrapper lost the translating flag")
+	}
+	if (&cachingTranslator{inner: &passthroughTranslator{}}).Translates() {
+		t.Error("the cache wrapper made a passthrough look like a translator")
 	}
 }

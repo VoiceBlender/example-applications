@@ -245,7 +245,8 @@ func (u *upperTranslator) Translate(_ context.Context, text, _, _ string) (strin
 	u.mu.Unlock()
 	return "<" + text + ">", nil
 }
-func (u *upperTranslator) Name() string { return "upper" }
+func (u *upperTranslator) Name() string     { return "upper" }
+func (u *upperTranslator) Translates() bool { return true }
 func (u *upperTranslator) count() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()

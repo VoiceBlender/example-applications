@@ -29,6 +29,11 @@ type translator interface {
 	// whatever its provider wants.
 	Translate(ctx context.Context, text, from, to string) (string, error)
 	Name() string
+	// Translates reports whether this backend actually translates anything.
+	// The passthrough does not, and that has to be visible: a listener hearing
+	// the speaker's own words read back looks exactly like a broken language
+	// setting, which is the single most confusing way for this app to fail.
+	Translates() bool
 }
 
 // newTranslator builds the configured backend.
@@ -67,7 +72,8 @@ type passthroughTranslator struct{}
 func (p *passthroughTranslator) Translate(_ context.Context, text, _, _ string) (string, error) {
 	return text, nil
 }
-func (p *passthroughTranslator) Name() string { return "passthrough" }
+func (p *passthroughTranslator) Name() string     { return "passthrough" }
+func (p *passthroughTranslator) Translates() bool { return false }
 
 // ── DeepL ─────────────────────────────────────────────────────────────────────
 
@@ -80,7 +86,8 @@ type deeplTranslator struct {
 	log *slog.Logger
 }
 
-func (d *deeplTranslator) Name() string { return "deepl" }
+func (d *deeplTranslator) Name() string     { return "deepl" }
+func (d *deeplTranslator) Translates() bool { return true }
 
 func (d *deeplTranslator) Translate(ctx context.Context, text, from, to string) (string, error) {
 	src, dst := lookupLang(from), lookupLang(to)
@@ -149,7 +156,8 @@ type cachingTranslator struct {
 	order []string // insertion order, for eviction
 }
 
-func (c *cachingTranslator) Name() string { return c.inner.Name() + "+cache" }
+func (c *cachingTranslator) Name() string     { return c.inner.Name() + "+cache" }
+func (c *cachingTranslator) Translates() bool { return c.inner.Translates() }
 
 func (c *cachingTranslator) Translate(ctx context.Context, text, from, to string) (string, error) {
 	key := from + "\x00" + to + "\x00" + text

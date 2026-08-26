@@ -272,6 +272,12 @@ func main() {
 	if cfg.eagerEOT == 0 {
 		log.Warn("eager end-of-turn disabled — translations will play a full turn late")
 	}
+	if !tr.Translates() {
+		log.Warn("TRANSLATION IS OFF (TRANSLATE_PROVIDER=none) — each participant will hear "+
+			"the other's ORIGINAL words read aloud, not a translation. This looks exactly like a "+
+			"broken language setting. Set TRANSLATE_PROVIDER=deepl and DEEPL_API_KEY to translate.",
+			"provider", tr.Name())
+	}
 	if !a.auth.enabled() {
 		log.Warn("no AUTH_PASSWORD set — the console is open to anyone who can reach it")
 	}

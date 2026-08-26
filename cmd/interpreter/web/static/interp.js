@@ -24,6 +24,7 @@ window.Session = function (sessionID, hooks) {
   let interpreting = false;
   let speaking = {};         // participant id → bool
   let ended = '';            // non-empty once the server has ended the session
+  let translating = true;    // false when TRANSLATE_PROVIDER=none
   let limits = { idle: 0, max: 0 };
 
   const audio = document.createElement('audio');
@@ -32,7 +33,7 @@ window.Session = function (sessionID, hooks) {
 
   function snapshot() {
     return { id, me, myName, mySeat, myLang, myGender, people: people.slice(),
-      conn, media, interpreting, ended, limits,
+      conn, media, interpreting, ended, limits, translating,
       speaking: Object.assign({}, speaking) };
   }
   function emit() { if (hooks.onState) hooks.onState(snapshot()); }
@@ -77,6 +78,7 @@ window.Session = function (sessionID, hooks) {
         myLang = msg.lang || myLang;
         myGender = msg.gender || myGender;
         limits = { idle: msg.idle_timeout_s || 0, max: msg.max_duration_s || 0 };
+        if (msg.translating !== undefined) translating = !!msg.translating;
         emit();
         // The server is ready for us; bring the media up.
         start();

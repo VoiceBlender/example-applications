@@ -282,9 +282,14 @@ services:
       ELEVENLABS_API_KEY: "${ELEVENLABS_API_KEY:-}"
 
       # Translation. VoiceBlender's STT providers do not translate, so this hop
-      # runs in the app. TRANSLATE_PROVIDER=none needs no key and reads your own
-      # words back — enough to prove the media path without an MT account.
-      TRANSLATE_PROVIDER: "${TRANSLATE_PROVIDER:-none}"
+      # runs in the app.
+      #
+      # This defaults to deepl ON PURPOSE. Without DEEPL_API_KEY the app refuses
+      # to start and says why — which is far better than the alternative it used
+      # to do: come up on TRANSLATE_PROVIDER=none and read each speaker's own
+      # words back, which is indistinguishable from a broken language setting.
+      # Set TRANSLATE_PROVIDER=none deliberately if you want that demo mode.
+      TRANSLATE_PROVIDER: "${TRANSLATE_PROVIDER:-deepl}"
       DEEPL_API_KEY: "${DEEPL_API_KEY:-}"
 
       # One shared static credential guards the console. Empty password = no

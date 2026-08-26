@@ -58,6 +58,13 @@
     <div class="bay hidden" id="console">
       <div class="bay-head">Session</div>
       <div id="notices"></div>
+      <!-- TRANSLATE_PROVIDER=none. Without saying so, the far end hearing your
+           own words read back looks exactly like a broken language setting. -->
+      <div class="ended hidden" id="notranslate">
+        <strong>Translation is off.</strong>
+        <span>You will hear the other person's <em>original</em> words read aloud, not a
+        translation — the server is running with <span class="mono">TRANSLATE_PROVIDER=none</span>.</span>
+      </div>
       <div class="ended hidden" id="ended">
         <strong id="ended-reason">Session ended.</strong>
         <span>The audio has stopped and this link is no longer live.</span>
@@ -175,6 +182,7 @@
     pjGender: document.getElementById('pj-gender'),
     pjJoin: document.getElementById('pj-join'),
     ended: document.getElementById('ended'),
+    notranslate: document.getElementById('notranslate'),
     endedReason: document.getElementById('ended-reason'),
     limits: document.getElementById('limits'),
     inviteLink: document.getElementById('invite-link'),
@@ -303,6 +311,7 @@
     el.lsLive.querySelector('.lamp').classList.toggle('on', s.interpreting);
 
     el.limits.textContent = limitsText(s.limits);
+    el.notranslate.classList.toggle('hidden', s.translating !== false);
   }
 
   // Say up front that the session ends itself. Both legs stream audio to the
