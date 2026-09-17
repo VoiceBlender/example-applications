@@ -219,6 +219,7 @@ func (a *app) serveHTTP() http.Handler {
 	mux.Handle("PUT /api/config", gated(a.handleUpdateConfig))
 	mux.Handle("GET /api/dialplan", gated(a.handleGetDialplan))
 	mux.Handle("PUT /api/dialplan", gated(a.handleUpdateDialplan))
+	mux.Handle("GET /api/dialplan/test", gated(a.handleDialplanTest))
 	mux.Handle("GET /api/stream", gated(a.handleStream))
 
 	return mux

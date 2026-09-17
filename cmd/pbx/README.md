@@ -66,6 +66,7 @@ The server hands every inbound INVITE to the app to decide, so inbound-call rout
   - **Speech**: options are keywords (`sales,support,billing`). The spoken transcript is matched to an option by whole-phrase, exact word, number-word (`one`→`1`), or fuzzy close-word (`sails`→`sales`) matching. Uses `STT_*` config (`STT_PROVIDER`/`STT_LANGUAGE`/`STT_API_KEY`). A per-node **language** overrides the default.
   - **Both**: accepts a keypress or a spoken keyword, whichever comes first.
 - **Editing**: drag a node's header to move it; click an output dot then an input dot to connect (one edge per output); click a node body to edit its settings; click a wire to delete it; **Save** persists the graph (Redis key `pbx:dialplan`), **Reload** re-pulls it.
+- **Test call**: **▶ Test call** opens a panel under the canvas that calls the *saved* dial plan from the browser (speaker + mic over a WebRTC leg), as a simulated inbound call with a chosen **caller**, **DID** and **trunk** — so `match` nodes can be exercised too. Once the call is running, a **keypad** (or the keyboard's `0-9 * #`) sends DTMF into it, fed to the same handlers as a real `dtmf.received` (gather nodes, the IVR). Every step is traced live: the running node is highlighted on the canvas, visited nodes stay outlined, and a log shows branches, gather results, hang-up reasons and bridges. If the editor has unsaved changes you're offered to save them first. Signalling is a separate console WebSocket, `/api/dialplan/test`; the test leg is deleted when the call ends or the panel closes.
 - **Trunk identification**: the server tags register-trunk inbound calls with `TrunkID` (source IP matched the trunk's captured peer socket); the app falls back to a source-IP match for ip trunks. That fallback accepts either the registrar or the outbound proxy host, since a provider fronted by a proxy calls in from the proxy. Calls that can't be tied to a trunk still run the graph, so a catch-all rule handles them — inbound calls are never blindly rejected.
 - **Default**: a fresh install seeds `start → ivr`, so inbound trunk calls reach the IVR out of the box. Edit the graph to route specific DIDs to extensions, play announcements, forward, etc.
 - `play`/`tts` answer the call before playing; `tts` uses the app's `TTS_*` config. REST: `GET`/`PUT /api/dialplan`.
@@ -77,6 +78,7 @@ The server hands every inbound INVITE to the app to decide, so inbound-call rout
 | `main.go` | app wiring, VSI event loop, startup |
 | `registrar.go` | REGISTER challenge / accept / reject; registration status |
 | `dialplan.go` | classify + authenticate inbound legs; bridge internal / external calls |
+| `dialplan_tester.go` | console test calls: WebRTC test leg, simulated inbound walk, keypad DTMF injection, step trace |
 | `ivr.go` | dial-by-extension IVR for inbound trunk calls |
 | `extensions.go` / `trunks.go` | in-memory registries + live status; extensions carry WebRTC accounts |
 | `phones.go` | live WebRTC softphone registry (sessions, `byLeg` index, ext fan-out) |

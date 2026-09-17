@@ -289,7 +289,7 @@ func (a *app) phoneOffer(ctx context.Context, sess *phoneSession, sdp string) {
 	a.phones.bindLeg(sess, resp.LegID)
 	a.log.Info("softphone leg created", "account", sess.account, "leg_id", resp.LegID)
 	sess.send(map[string]any{"type": "webrtc.answer", "leg_id": resp.LegID, "sdp": resp.SDP})
-	go a.pushPhoneCandidates(ctx, sess.leg(), sess)
+	go a.pushCandidates(ctx, sess.leg(), sess.send)
 }
 
 func (a *app) phoneRemoteCandidate(ctx context.Context, sess *phoneSession, cand voiceblender.ICECandidateInit) {
@@ -302,10 +302,10 @@ func (a *app) phoneRemoteCandidate(ctx context.Context, sess *phoneSession, cand
 	}
 }
 
-// pushPhoneCandidates polls VoiceBlender for the leg's server-gathered ICE
-// candidates and forwards each to the browser. Exits when gathering completes or
-// the WS ends.
-func (a *app) pushPhoneCandidates(ctx context.Context, legID string, sess *phoneSession) {
+// pushCandidates polls VoiceBlender for the leg's server-gathered ICE
+// candidates and forwards each to the browser via send. Exits when gathering
+// completes or the WS ends. Shared by the softphone and the dial-plan tester.
+func (a *app) pushCandidates(ctx context.Context, legID string, send func(any)) {
 	if legID == "" {
 		return
 	}
@@ -322,11 +322,11 @@ func (a *app) pushPhoneCandidates(ctx context.Context, legID string, sess *phone
 			if ctx.Err() != nil || isVSINotFound(err) {
 				return
 			}
-			a.log.Warn("softphone poll ice", "leg_id", legID, "error", err)
+			a.log.Warn("poll ice candidates", "leg_id", legID, "error", err)
 			continue
 		}
 		for _, cand := range resp.Candidates {
-			sess.send(map[string]any{"type": "webrtc.candidate", "candidate": cand})
+			send(map[string]any{"type": "webrtc.candidate", "candidate": cand})
 		}
 		if resp.Done {
 			return
