@@ -67,6 +67,9 @@ func (a *app) dpGather(exec *dpExec, node *DPNode) {
 			Language: node.param("language", a.sttLanguage),
 			Provider: a.sttProvider,
 			APIKey:   a.sttAPIKey,
+			// Bias recognition towards the menu's keywords so e.g. "mock"
+			// isn't transcribed as "no".
+			Keyterms: gatherKeyterms(a.dpGatherOptions(exec.tenantID, node.ID)),
 		}); err != nil {
 			a.log.Warn("gather stt start failed", "leg_id", exec.legID, "error", err)
 		} else {
@@ -232,6 +235,20 @@ func (a *app) dpGatherOptions(tenantID, nodeID string) []string {
 		}
 	}
 	return opts
+}
+
+// gatherKeyterms turns gather options into STT keyterms. Digit-only options
+// (DTMF keys) are skipped — they gain nothing from boosting.
+func gatherKeyterms(opts []string) []string {
+	var terms []string
+	for _, o := range opts {
+		o = strings.TrimSpace(o)
+		if o == "" || strings.Trim(o, "0123456789*#") == "" {
+			continue
+		}
+		terms = append(terms, o)
+	}
+	return terms
 }
 
 // dpGatherHasOption reports whether the gather node has a wired output for value
