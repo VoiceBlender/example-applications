@@ -25,10 +25,15 @@ type Trunk struct {
 
 	// register-type fields.
 	RegistrarURI string `json:"registrar_uri,omitempty"`
-	AOR          string `json:"aor,omitempty"`
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"`
-	Expires      int    `json:"expires,omitempty"`
+	// OutboundProxy, when set, is the next hop the REGISTER and this trunk's
+	// outbound INVITEs are sent to. The Request-URI still names RegistrarURI,
+	// so a provider whose edge proxy differs from its registrar domain (or
+	// listens on a non-default port) works without faking the registrar URI.
+	OutboundProxy string `json:"outbound_proxy,omitempty"`
+	AOR           string `json:"aor,omitempty"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	Expires       int    `json:"expires,omitempty"`
 
 	// ip-type fields.
 	PeerURI string   `json:"peer_uri,omitempty"`
@@ -36,11 +41,25 @@ type Trunk struct {
 }
 
 // dialHost is the SIP host outbound external calls via this trunk are sent to.
+// It stays the registrar even when an outbound proxy is configured: the proxy
+// is a next hop, not a destination, and the server attaches it to INVITEs
+// placed from this trunk's AOR.
 func (t Trunk) dialHost() string {
 	if t.Type == trunkIP {
 		return sipHost(t.PeerURI)
 	}
 	return sipHost(t.RegistrarURI)
+}
+
+// peerHosts are the hosts inbound calls on this trunk can arrive from. With an
+// outbound proxy in front, the provider reaches us from the proxy rather than
+// the registrar, so both count.
+func (t Trunk) peerHosts() []string {
+	hosts := []string{t.dialHost()}
+	if h := sipHost(t.OutboundProxy); h != "" {
+		hosts = append(hosts, h)
+	}
+	return hosts
 }
 
 // trunkStatus is the live server-side state of a trunk.
@@ -53,17 +72,18 @@ type trunkStatus struct {
 
 // trunkView is the password-free projection sent to the web UI.
 type trunkView struct {
-	ID           string   `json:"id"`
-	TenantID     string   `json:"tenant_id,omitempty"`
-	Name         string   `json:"name"`
-	Type         string   `json:"type"`
-	RegistrarURI string   `json:"registrar_uri,omitempty"`
-	AOR          string   `json:"aor,omitempty"`
-	Username     string   `json:"username,omitempty"`
-	PeerURI      string   `json:"peer_uri,omitempty"`
-	PeerIPs      []string `json:"peer_ips,omitempty"`
-	State        string   `json:"state"`
-	LastError    string   `json:"last_error,omitempty"`
+	ID            string   `json:"id"`
+	TenantID      string   `json:"tenant_id,omitempty"`
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	RegistrarURI  string   `json:"registrar_uri,omitempty"`
+	OutboundProxy string   `json:"outbound_proxy,omitempty"`
+	AOR           string   `json:"aor,omitempty"`
+	Username      string   `json:"username,omitempty"`
+	PeerURI       string   `json:"peer_uri,omitempty"`
+	PeerIPs       []string `json:"peer_ips,omitempty"`
+	State         string   `json:"state"`
+	LastError     string   `json:"last_error,omitempty"`
 }
 
 // trunkRegistry holds configured trunks plus their live status.
@@ -236,8 +256,10 @@ func (r *trunkRegistry) trunkForSourceIP(ip string) (Trunk, bool) {
 				return *t, true
 			}
 		}
-		if h := t.dialHost(); h == ip {
-			return *t, true
+		for _, h := range t.peerHosts() {
+			if h == ip {
+				return *t, true
+			}
 		}
 	}
 	return Trunk{}, false
@@ -296,7 +318,8 @@ func (r *trunkRegistry) outboundTrunk(tenantID string) (Trunk, bool) {
 func (r *trunkRegistry) viewOf(t *Trunk) trunkView {
 	v := trunkView{
 		ID: t.ID, TenantID: t.TenantID, Name: t.Name, Type: t.Type,
-		RegistrarURI: t.RegistrarURI, AOR: t.AOR, Username: t.Username,
+		RegistrarURI: t.RegistrarURI, OutboundProxy: t.OutboundProxy,
+		AOR: t.AOR, Username: t.Username,
 		PeerURI: t.PeerURI, PeerIPs: t.PeerIPs,
 		State: "pending",
 	}

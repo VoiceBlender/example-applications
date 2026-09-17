@@ -75,3 +75,20 @@
 		format console
 	}
 }
+
+# Live interpreter — a third site on the same ports, again told apart by
+# hostname. Same secure-context caveat as push-to-talk: it needs a microphone,
+# so `*.localhost` works for local trials and anything else needs HTTPS. Set
+# CADDY_INTERP_DOMAIN to a real hostname and Caddy provisions a certificate for
+# it alongside the others.
+#
+# reverse_proxy passes the WebSocket upgrade for /api/interpreter/stream
+# straight through; no extra config needed.
+{$CADDY_INTERP_DOMAIN:http://interp.localhost} {
+	reverse_proxy interpreter:8093
+
+	log {
+		output stdout
+		format console
+	}
+}

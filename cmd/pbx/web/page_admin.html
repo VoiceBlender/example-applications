@@ -174,6 +174,7 @@ input:focus,select:focus{border-color:var(--amber);}
     <div class="field"><label>Name</label><input id="trunk-name" placeholder="Provider A"></div>
     <div class="field"><label>Type</label><select id="trunk-type"><option value="register">Register</option><option value="ip">IP (source-IP auth)</option></select></div>
     <div class="field reg"><label>Registrar URI</label><input id="trunk-registrar" placeholder="sip:sip.provider.com"></div>
+    <div class="field reg"><label>Outbound proxy (optional)</label><input id="trunk-proxy" placeholder="sip:edge.provider.com:5060"></div>
     <div class="field reg"><label>AOR</label><input id="trunk-aor" placeholder="sip:12345@sip.provider.com"></div>
     <div class="field reg"><label>Username</label><input id="trunk-username" placeholder="12345"></div>
     <div class="field reg"><label>Password</label><input id="trunk-password" type="password"></div>
@@ -241,7 +242,8 @@ input:focus,select:focus{border-color:var(--amber);}
       const td = el('div'); td.appendChild(el('span', 'tenant-tag', t.tenant_id)); row.appendChild(td);
       row.appendChild(el('div', null, t.name || '—'));
       row.appendChild(el('div', 'mono', t.type));
-      row.appendChild(el('div', 'mono', t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—')));
+      const hop = t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—') + (t.outbound_proxy ? ' via ' + t.outbound_proxy : '');
+      row.appendChild(el('div', 'mono', hop));
       let cls = 'warn'; if (t.state === 'registered' || t.state === 'active') cls = 'ok'; else if (t.state === 'failed' || t.state === 'expired') cls = 'bad';
       const s = el('div'); const chip = el('span', 'state ' + cls); chip.appendChild(el('span', 'dot')); chip.appendChild(document.createTextNode(t.state || 'pending')); if (t.last_error) chip.title = t.last_error; s.appendChild(chip); row.appendChild(s);
       const a = el('div', 'actions'); const ed = el('button', 'btn', 'Edit'); ed.onclick = () => openTrunk(t); const dl = el('button', 'btn danger', 'Delete'); dl.onclick = () => delTrunk(t); a.append(ed, dl); row.appendChild(a);
@@ -283,6 +285,7 @@ input:focus,select:focus{border-color:var(--amber);}
     $('trunk-name').value = t ? (t.name || '') : '';
     $('trunk-type').value = t ? (t.type || 'register') : 'register';
     $('trunk-registrar').value = t ? (t.registrar_uri || '') : '';
+    $('trunk-proxy').value = t ? (t.outbound_proxy || '') : '';
     $('trunk-aor').value = t ? (t.aor || '') : '';
     $('trunk-username').value = t ? (t.username || '') : '';
     $('trunk-password').value = '';
@@ -296,7 +299,7 @@ input:focus,select:focus{border-color:var(--amber);}
     const id = $('trunk-id').value; const type = $('trunk-type').value;
     const body = { tenant_id: $('trunk-tenant').value, name: $('trunk-name').value.trim(), type };
     if (!body.name) { $('trunk-err').textContent = 'Name is required.'; return; }
-    if (type === 'register') { body.registrar_uri = $('trunk-registrar').value.trim(); body.aor = $('trunk-aor').value.trim(); body.username = $('trunk-username').value.trim(); body.password = $('trunk-password').value; const ex = parseInt($('trunk-expires').value, 10); if (!isNaN(ex)) body.expires = ex; }
+    if (type === 'register') { body.registrar_uri = $('trunk-registrar').value.trim(); body.outbound_proxy = $('trunk-proxy').value.trim(); body.aor = $('trunk-aor').value.trim(); body.username = $('trunk-username').value.trim(); body.password = $('trunk-password').value; const ex = parseInt($('trunk-expires').value, 10); if (!isNaN(ex)) body.expires = ex; }
     else { body.peer_uri = $('trunk-peer').value.trim(); body.peer_ips = $('trunk-peerips').value.split(',').map(s => s.trim()).filter(Boolean); }
     const r = await fetch('/api/admin/trunks' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!r.ok) { $('trunk-err').textContent = 'Save failed (' + r.status + ').'; return; }

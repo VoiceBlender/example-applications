@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
@@ -328,7 +327,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 	ctx := context.Background()
 	roomID := "call-" + aLeg
 
-	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID}); err != nil && !isVSIConflict(err) {
+	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID, AppID: a.appID}); err != nil && !isVSIConflict(err) {
 		a.log.Error("create room", "room", roomID, "error", err)
 		a.hangup(aLeg, "unavailable")
 		return
@@ -342,7 +341,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		} else {
 			ringbackPB = pb.PlaybackID
 		}
-	} else if _, err := a.vsi().LegRing(ctx, voiceblender.IDPayload{ID: aLeg}); err != nil {
+	} else if _, err := a.vsi().LegRing(ctx, voiceblender.RingLegPayload{ID: aLeg}); err != nil {
 		a.log.Warn("ring caller (180)", "leg_id", aLeg, "error", err)
 	}
 
@@ -358,6 +357,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		Auth:        auth,
 		Codecs:      meta.codecs,
 		RingTimeout: ringTime,
+		AppID:       a.appID,
 	})
 	if err != nil {
 		a.log.Error("originate outbound leg", "to", toURI, "error", err)
@@ -368,7 +368,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		a.hangup(aLeg, "unavailable")
 		return
 	}
-	bLeg := parseLegID(raw)
+	bLeg := legIDOf(raw)
 	if bLeg == "" {
 		a.log.Error("outbound leg has no id", "to", toURI)
 		a.hangup(aLeg, "unavailable")
@@ -590,13 +590,6 @@ func (a *app) hangup(legID, reason string) {
 	}
 }
 
-// parseLegID extracts the "id" field from a create_leg response.
-func parseLegID(raw json.RawMessage) string {
-	var v struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return ""
-	}
-	return v.ID
-}
+// legIDOf names the id of a leg returned by create_leg, so the "did we actually
+// get a leg back" check at each call site reads the same way.
+func legIDOf(leg voiceblender.Leg) string { return leg.ID }

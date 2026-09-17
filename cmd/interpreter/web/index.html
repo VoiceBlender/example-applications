@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interpreter</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">VoiceBlender · example</div>
+  <h1 class="title">Live interpreter</h1>
+  <p class="lede">
+    Two people, two languages, one conversation. Each of you hears only the
+    other's translated voice — the original speech is never mixed through.
+  </p>
+
+  <div class="err" id="err"></div>
+
+  <div class="card">
+    <div class="head">Start a session</div>
+    <div class="body">
+      <div class="row">
+        <div class="grow">
+          <label for="name">Your name</label>
+          <input id="name" autocomplete="nickname" placeholder="alice" maxlength="24">
+        </div>
+        <div class="grow">
+          <label for="lang">You speak</label>
+          <select id="lang">
+            {{range .Languages}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <div class="grow">
+          <label for="gender">Your voice</label>
+          <select id="gender">
+            {{range .Genders}}<option value="{{.Code}}">{{.Label}}</option>{{end}}
+          </select>
+        </div>
+        <button id="create">Start</button>
+      </div>
+      <p class="hint" style="margin-top:14px">
+        You'll get a link to send to the other person. They pick their own
+        language and voice when they arrive.<br>
+        <em>Your voice</em> is the one <em>they</em> hear your words spoken in.
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="head">Join a session</div>
+    <div class="body">
+      <div class="row">
+        <div class="grow">
+          <label for="code">Session code</label>
+          <input id="code" class="mono" placeholder="a1b2c3d4" autocapitalize="off" spellcheck="false">
+        </div>
+        <button class="ghost" id="join">Join</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">
+    Needs a microphone, which browsers only release in a secure context —
+    <span class="mono">localhost</span> or HTTPS.
+    {{if .Auth}}<br><a href="/logout">Sign out</a>{{end}}
+  </p>
+</div>
+
+<script>
+(function () {
+  const err = document.getElementById('err');
+  const nameEl = document.getElementById('name');
+  const langEl = document.getElementById('lang');
+  const codeEl = document.getElementById('code');
+  const genderEl = document.getElementById('gender');
+
+  // Remember the last name and language so a reload, or a second session, does
+  // not make you type them again.
+  try {
+    nameEl.value = localStorage.getItem('interp.name') || '';
+    const l = localStorage.getItem('interp.lang');
+    if (l) langEl.value = l;
+    const g = localStorage.getItem('interp.gender');
+    if (g) genderEl.value = g;
+  } catch (e) {}
+
+  if (new URLSearchParams(location.search).get('gone')) {
+    err.textContent = 'That session has ended.';
+  }
+
+  function enter(id) {
+    const name = (nameEl.value || '').trim() || 'guest';
+    const lang = langEl.value;
+    const gender = genderEl.value;
+    try {
+      localStorage.setItem('interp.name', name);
+      localStorage.setItem('interp.lang', lang);
+      localStorage.setItem('interp.gender', gender);
+    } catch (e) {}
+    location.href = '/s/' + encodeURIComponent(id)
+      + '?name=' + encodeURIComponent(name)
+      + '&lang=' + encodeURIComponent(lang)
+      + '&gender=' + encodeURIComponent(gender);
+  }
+
+  document.getElementById('create').addEventListener('click', async () => {
+    err.textContent = '';
+    try {
+      const r = await fetch('/api/sessions', { method: 'POST' });
+      if (!r.ok) throw new Error('could not start a session');
+      const body = await r.json();
+      enter(body.id);
+    } catch (e) {
+      err.textContent = e.message || 'could not start a session';
+    }
+  });
+
+  document.getElementById('join').addEventListener('click', () => {
+    const code = (codeEl.value || '').trim();
+    if (!code) { err.textContent = 'Enter a session code.'; return; }
+    enter(code);
+  });
+  codeEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('join').click(); });
+})();
+</script>
+</body>
+</html>

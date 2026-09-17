@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,6 +89,34 @@ type app struct {
 
 	calls   sync.Map // legID → *ivrCall (inbound trunk calls in the IVR)
 	dpExecs sync.Map // legID → *dpExec (inbound calls walking the dial plan)
+
+	// appID tags everything the PBX creates on VoiceBlender (rooms, outbound
+	// legs, softphone WebRTC legs, register trunks) and scopes the events it
+	// subscribes to, so several examples can share one VoiceBlender instance.
+	// appStrict decides whether untagged inbound calls are accepted — see
+	// appFilter.
+	appID     string
+	appStrict bool
+}
+
+// appFilter is the VSI app_id regex the PBX subscribes with.
+//
+// Everything the PBX creates is tagged with app_id, and so is every event from
+// a register trunk it creates (inbound DIDs included). Calls that reach
+// VoiceBlender any other way — e.g. directly from a SIP phone or an IP peer —
+// are created by the server and only carry an app_id if the INVITE has an
+// `X-App-ID` header; otherwise app_id is empty.
+//
+// So by default the filter also accepts the empty app_id; a strict `^id$`
+// filter would silently drop those calls. The same goes for extension
+// REGISTER events from phones. Set APP_ID_STRICT=1 only when all traffic for
+// the PBX is tagged, to fully isolate it from other examples.
+func (a *app) appFilter() string {
+	id := regexp.QuoteMeta(a.appID)
+	if a.appStrict {
+		return "^" + id + "$"
+	}
+	return "^(?:" + id + ")?$"
 }
 
 func main() {
@@ -131,6 +160,8 @@ func main() {
 		phoneSessions: newPhoneSessionStore(store),
 		phones:        newPhoneRegistry(),
 		hub:           newWebHub(),
+		appID:         envOr("APP_ID", "pbx"),
+		appStrict:     boolEnv("APP_ID_STRICT"),
 	}
 	a.tenants = newTenantStore(store)
 	a.exts = newExtRegistry(store)
@@ -184,7 +215,10 @@ func main() {
 
 	// VSI WebSocket (events + commands). Frame logging (every command sent /
 	// event received) is on by default; set VSI_LOG=0 to silence it.
-	var streamOpts []voiceblender.EventStreamOption
+	// Several examples can share one VoiceBlender, so ask the server to send only
+	// the events that concern the PBX.
+	streamOpts := []voiceblender.EventStreamOption{voiceblender.WithAppFilter(a.appFilter())}
+	log.Info("VSI app filter", "app_id", a.appID, "filter", a.appFilter(), "strict", a.appStrict)
 	if vsiFrameLogEnabled() {
 		streamOpts = append(streamOpts, voiceblender.WithFrameLogger(a.logVSIFrame))
 		log.Info("VSI frame logging enabled (set VSI_LOG=0 to disable)")
@@ -363,6 +397,15 @@ func (a *app) runEventLoop(ctx context.Context) {
 	}
 }
 
+// boolEnv reports whether an env var is set to a truthy value. Unset is false.
+func boolEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -428,11 +471,8 @@ func chooseCodec(prefs []string, offered []voiceblender.OfferedCodec) string {
 		return ""
 	}
 	offeredByName := make(map[string]string, len(offered))
-	for _, raw := range offered {
-		var c struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &c); err != nil || c.Name == "" {
+	for _, c := range offered {
+		if c.Name == "" {
 			continue
 		}
 		offeredByName[strings.ToLower(c.Name)] = c.Name
