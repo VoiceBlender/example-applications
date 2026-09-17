@@ -14,6 +14,7 @@
       <button class="cc-btn" data-dp-add="tts">+ TTS</button>
       <button class="cc-btn" data-dp-add="reject">+ Reject</button>
       <button class="cc-btn" data-ref="dp-reload">Reload</button>
+      <button class="cc-btn dp-test-btn" data-ref="dp-test-open">▶ Test call</button>
       <button class="btn-primary" data-ref="dp-save">Save</button>
     </div>
   </div>
@@ -21,6 +22,34 @@
   <div class="dp-canvas" data-ref="dp-canvas">
     <svg class="dp-wires" data-ref="dp-wires"></svg>
   </div>
+  <div class="dp-test" data-ref="dp-test" hidden>
+    <div class="dp-test-head">
+      <div class="board-title">Test call</div>
+      <span class="state" data-ref="dpt-state"><span class="state-dot"></span><span data-ref="dpt-state-label">Idle</span></span>
+      <button class="modal-close" data-ref="dp-test-close" title="Close">✕</button>
+    </div>
+    <div class="dp-test-body">
+      <div class="dp-test-setup">
+        <div class="field"><label>Caller (From)</label><input type="text" data-ref="dpt-from" placeholder="+15551230000"></div>
+        <div class="field"><label>Dialed number (DID)</label><input type="text" data-ref="dpt-did" placeholder="3005113"></div>
+        <div class="field"><label>Arriving on trunk</label><select data-ref="dpt-trunk"></select></div>
+        <div class="dp-test-actions">
+          <button class="btn-primary" data-ref="dpt-call">Call</button>
+          <button class="cc-btn danger" data-ref="dpt-hangup" disabled>Hang up</button>
+        </div>
+        <div class="config-hint">Runs the <b>saved</b> dial plan in your browser (speaker + microphone) as an inbound call. Use the keypad — or your keyboard's 0-9 * # — to send DTMF.</div>
+      </div>
+      <div class="dp-test-pad">
+        <div class="dpt-entered" data-ref="dpt-entered">&nbsp;</div>
+        <div class="dpt-keys" data-ref="dpt-keys"></div>
+      </div>
+      <div class="dp-test-trace">
+        <label>Trace</label>
+        <ol class="dpt-log" data-ref="dpt-log"></ol>
+      </div>
+    </div>
+  </div>
+  <audio data-ref="dpt-sink" autoplay playsinline></audio>
 </section>
 {{end}}
 

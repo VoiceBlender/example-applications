@@ -89,6 +89,7 @@ type app struct {
 
 	calls   sync.Map // legID → *ivrCall (inbound trunk calls in the IVR)
 	dpExecs sync.Map // legID → *dpExec (inbound calls walking the dial plan)
+	dpTests sync.Map // legID → *dpTestSession (console dial-plan test calls)
 
 	// appID tags everything the PBX creates on VoiceBlender (rooms, outbound
 	// legs, softphone WebRTC legs, register trunks) and scopes the events it

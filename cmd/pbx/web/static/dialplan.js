@@ -6,6 +6,7 @@
   const $ = PBX.$, el = PBX.el;
 
   let dp = { nodes: [], edges: [] }, dpLoaded = false, dpArm = null, dpExts = [], dpTrunks = [], dpEditId = null;
+  let dpSaved = ''; // JSON of the graph as last loaded/saved (unsaved-changes check before a test call)
   const DP_META = {
     start:  { label: 'Start',     outs: ['out'],             hasIn: false },
     match:  { label: 'Match',     outs: ['match', 'nomatch'], hasIn: true },
@@ -76,6 +77,7 @@
       cv.appendChild(box);
     });
     dpDrawWires();
+    testMarkNodes();
   }
 
   function handleCenter(elm) { const node = elm.closest('.dp-node'); return { x: node.offsetLeft + elm.offsetLeft + elm.offsetWidth / 2, y: node.offsetTop + elm.offsetTop + elm.offsetHeight / 2 }; }
@@ -172,20 +174,166 @@
 
   async function saveDialplan() {
     const s = $('dp-status');
-    const r = await fetch('/api/dialplan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dp) });
-    if (r.ok) { s.style.color = 'var(--green)'; s.textContent = 'Saved'; }
+    const body = JSON.stringify(dp);
+    const r = await fetch('/api/dialplan', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+    if (r.ok) { s.style.color = 'var(--green)'; s.textContent = 'Saved'; dpSaved = body; }
     else { s.style.color = 'var(--red)'; s.textContent = 'Save failed (' + r.status + ')'; }
     setTimeout(() => { s.textContent = ''; }, 2500);
+    return r.ok;
   }
   async function reloadDialplan() {
     const r = await fetch('/api/dialplan'); if (!r.ok) return;
-    dp = normDp(await r.json()); dpArm = null; renderDialplan();
+    dp = normDp(await r.json()); dpSaved = JSON.stringify(dp); dpArm = null; renderDialplan();
+  }
+
+  // ── Test call ─────────────────────────────────────────────────────────────
+  // A browser WebRTC leg runs the saved dial plan as a simulated inbound call
+  // (/api/dialplan/test). The keypad sends DTMF over that socket; the server
+  // traces each step back so the active node is highlighted on the canvas.
+  const T = { ws: null, pc: null, mic: null, started: false, active: null, visited: new Set(), pendingCands: [], entered: '', audioCtx: null };
+  const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
+  const DTMF_HZ = { '1': [697, 1209], '2': [697, 1336], '3': [697, 1477], '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+    '7': [852, 1209], '8': [852, 1336], '9': [852, 1477], '*': [941, 1209], '0': [941, 1336], '#': [941, 1477] };
+
+  function tSend(m) { if (T.ws && T.ws.readyState === 1) T.ws.send(JSON.stringify(m)); }
+  function tState(cls, label) { const s = $('dpt-state'); s.className = 'state ' + cls; $('dpt-state-label').textContent = label; }
+  function tLog(text, cls, nodeId) {
+    const li = el('li');
+    li.appendChild(el('span', 't', new Date().toLocaleTimeString([], { hour12: false })));
+    const body = el('span', cls || null, text);
+    if (nodeId) { body.onclick = () => { const b = $('dp-canvas').querySelector('.dp-node[data-node="' + nodeId + '"]'); if (b) b.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }); }; }
+    li.appendChild(body);
+    const log = $('dpt-log'); log.appendChild(li); log.scrollTop = log.scrollHeight;
+  }
+  function testMarkNodes() {
+    const cv = $('dp-canvas'); if (!cv) return;
+    cv.querySelectorAll('.dp-node').forEach(b => {
+      b.classList.toggle('dp-active', b.dataset.node === T.active);
+      b.classList.toggle('dp-visited', T.visited.has(b.dataset.node) && b.dataset.node !== T.active);
+    });
+  }
+  function tSetButtons(inCall) {
+    $('dpt-call').disabled = inCall; $('dpt-hangup').disabled = !inCall;
+    $('dpt-keys').classList.toggle('off', !T.started);
+  }
+  function tTone(d) {
+    const hz = DTMF_HZ[d]; if (!hz) return;
+    try {
+      T.audioCtx = T.audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = T.audioCtx, g = ctx.createGain(); g.gain.value = 0.08; g.connect(ctx.destination);
+      hz.forEach(f => { const o = ctx.createOscillator(); o.frequency.value = f; o.connect(g); o.start(); o.stop(ctx.currentTime + 0.12); });
+    } catch (e) {}
+  }
+  function tPress(d) {
+    if (!T.started) return;
+    tSend({ type: 'dtmf', digit: d }); tTone(d);
+    T.entered = (T.entered + d).slice(-24); $('dpt-entered').textContent = T.entered;
+    const k = $('dpt-keys').querySelector('[data-key="' + CSS.escape(d) + '"]');
+    if (k) { k.classList.add('hit'); setTimeout(() => k.classList.remove('hit'), 140); }
+  }
+
+  function openTest() {
+    const sel = $('dpt-trunk'), cur = sel.value;
+    fillSelect(sel, [{ v: '', t: 'None / unidentified' }].concat(dpTrunks.map(t => ({ v: t.id, t: t.name }))));
+    sel.value = dpTrunks.some(t => t.id === cur) ? cur : '';
+    $('dp-test').hidden = false; tSetButtons(!!T.ws);
+    $('dp-test').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function closeTest() { testTeardown(); $('dp-test').hidden = true; T.active = null; T.visited.clear(); testMarkNodes(); }
+
+  async function testCall() {
+    if (T.ws) return;
+    if (JSON.stringify(dp) !== dpSaved) {
+      if (confirm('The dial plan has unsaved changes. Save them before testing?\n(Cancel tests the previously saved version.)')) {
+        if (!(await saveDialplan())) { tLog('save failed — test not started', 'err'); return; }
+      }
+    }
+    $('dpt-log').innerHTML = ''; T.entered = ''; $('dpt-entered').innerHTML = '&nbsp;';
+    T.active = null; T.visited.clear(); T.started = false; T.pendingCands = []; testMarkNodes();
+    tState('warn', 'Connecting'); tSetButtons(true);
+
+    try { T.mic = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { T.mic = null; tLog('no microphone — listen-only (speech input unavailable)', 'err'); }
+
+    const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const ws = new WebSocket(proto + location.host + '/api/dialplan/test');
+    T.ws = ws;
+    ws.onopen = async () => {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      T.pc = pc;
+      if (T.mic) { T.mic.getAudioTracks().forEach(t => pc.addTrack(t, T.mic)); }
+      else { pc.addTransceiver('audio', { direction: 'sendrecv' }); }
+      pc.ontrack = (ev) => { const s = $('dpt-sink'); s.srcObject = ev.streams[0] || new MediaStream([ev.track]); const p = s.play(); if (p && p.catch) p.catch(() => {}); };
+      pc.onicecandidate = (ev) => { if (ev.candidate) tSend({ type: 'webrtc.candidate', candidate: ev.candidate.toJSON() }); };
+      pc.onconnectionstatechange = () => {
+        if (T.pc !== pc) return;
+        if (pc.connectionState === 'connected' && !T.started) {
+          tSend({ type: 'start', from: $('dpt-from').value, did: $('dpt-did').value, trunk: $('dpt-trunk').value });
+        } else if (pc.connectionState === 'failed') {
+          tLog('audio connection failed', 'err'); testTeardown();
+        }
+      };
+      try {
+        await pc.setLocalDescription(await pc.createOffer());
+        tSend({ type: 'webrtc.offer', sdp: pc.localDescription.sdp });
+      } catch (e) { tLog('offer error: ' + e, 'err'); testTeardown(); }
+    };
+    ws.onmessage = async (ev) => {
+      let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      switch (m.type) {
+        case 'webrtc.answer':
+          try {
+            await T.pc.setRemoteDescription({ type: 'answer', sdp: m.sdp });
+            T.pendingCands.splice(0).forEach(c => T.pc.addIceCandidate(c).catch(() => {}));
+          } catch (e) { tLog('answer error: ' + e, 'err'); testTeardown(); }
+          break;
+        case 'webrtc.candidate':
+          if (!T.pc) break;
+          if (T.pc.remoteDescription) T.pc.addIceCandidate(m.candidate).catch(() => {}); else T.pendingCands.push(m.candidate);
+          break;
+        case 'started':
+          T.started = true; tState('ok', 'In call'); tSetButtons(true); tLog('call started');
+          break;
+        case 'trace':
+          if (m.node) {
+            if (T.active) T.visited.add(T.active);
+            T.active = m.node; T.visited.add(m.node); testMarkNodes();
+            const n = dpNode(m.node), label = n ? ((DP_META[n.type] || {}).label || n.type) : m.node;
+            tLog(m.text && n && m.text !== n.type ? label + ' · ' + m.text : label + (n ? ' · ' + dpSummary(n) : ''), 'node', m.node);
+          } else {
+            tLog(m.text, /^DTMF/.test(m.text) ? 'dtmf' : null);
+          }
+          break;
+        case 'ended':
+          tLog('call ended' + (m.reason ? ' (' + m.reason + ')' : '')); testTeardown();
+          break;
+        case 'error':
+          tLog(m.message || 'error', 'err'); testTeardown();
+          break;
+      }
+    };
+    ws.onclose = () => { if (T.ws === ws) { testTeardown(); } };
+  }
+
+  function hangupTest() { if (T.started) tSend({ type: 'hangup' }); else testTeardown(); }
+
+  function testTeardown() {
+    const ws = T.ws, pc = T.pc;
+    T.ws = null; T.pc = null; T.started = false;
+    if (pc) { try { pc.close(); } catch (e) {} }
+    if (ws) { try { ws.close(); } catch (e) {} }
+    if (T.mic) { T.mic.getTracks().forEach(t => t.stop()); T.mic = null; }
+    const s = $('dpt-sink'); if (s) s.srcObject = null;
+    if (T.active) { T.visited.add(T.active); T.active = null; }
+    testMarkNodes();
+    if (ws) tState('', 'Ended');
+    tSetButtons(false);
   }
 
   PBX.onSnapshot(snap => {
     dpExts = snap.extensions || [];
     dpTrunks = snap.trunks || [];
-    if (!dpLoaded && snap.dialplan) { dp = normDp(snap.dialplan); dpLoaded = true; renderDialplan(); }
+    if (!dpLoaded && snap.dialplan) { dp = normDp(snap.dialplan); dpSaved = JSON.stringify(dp); dpLoaded = true; renderDialplan(); }
   });
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -196,6 +344,20 @@
     $('dpn-save').onclick = saveNode;
     $('dp-canvas').addEventListener('click', () => { if (dpArm) { dpArm = null; renderDialplan(); } });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeNode(); dpArm = null; } });
+
+    $('dp-test-open').onclick = openTest;
+    $('dp-test-close').onclick = closeTest;
+    $('dpt-call').onclick = testCall;
+    $('dpt-hangup').onclick = hangupTest;
+    KEYS.forEach(k => { const b = el('button', 'dpt-key', k); b.dataset.key = k; b.onclick = () => tPress(k); $('dpt-keys').appendChild(b); });
+    tSetButtons(false);
+    // Physical keyboard → DTMF while a test call is running (not while typing in a field).
+    document.addEventListener('keydown', e => {
+      if (!T.started || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target.closest && e.target.closest('input,select,textarea')) return;
+      if (KEYS.includes(e.key)) { e.preventDefault(); tPress(e.key); }
+    });
+    window.addEventListener('beforeunload', () => testTeardown());
     $('dpn-modal').addEventListener('click', e => { if (e.target === $('dpn-modal')) { $('dpn-modal').hidden = true; } });
   });
 })();

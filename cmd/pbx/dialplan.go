@@ -436,6 +436,7 @@ func (a *app) connectCaller(b *bridge) {
 		return
 	}
 	b.markConnected()
+	a.dpTrace(b.aLeg, "", "connected to "+b.to)
 	a.notifySoftphoneCaller(b.roomID, b.aLeg, b.to)
 	a.notifyChanged()
 	a.log.Info("call connected", "a_leg", b.aLeg, "b_leg", b.bLeg)
@@ -445,6 +446,7 @@ func (a *app) connectCaller(b *bridge) {
 // callee's leg fails), relaying the disconnect reason to the surviving leg, and
 // cleans up any IVR state.
 func (a *app) onLegDisconnected(legID, reason string) {
+	a.dpTestEnded(legID, reason) // a console test call's leg is gone
 	// If a softphone's own media leg dropped (browser closed / crashed), retire
 	// it from the phone registry so it's no longer a ring target. Its call
 	// teardown (fork/bridge peer) continues below.
@@ -585,6 +587,15 @@ func (a *app) detachOrHangup(roomID, legID, reason string) {
 
 // hangup deletes a leg, ignoring "already gone" errors.
 func (a *app) hangup(legID, reason string) {
+	if _, ok := a.dpTest(legID); ok {
+		// A console test call: report why, but send no SIP reason (it's WebRTC).
+		msg := "hang up"
+		if reason != "" {
+			msg += " (" + reason + ")"
+		}
+		a.dpTrace(legID, "", msg)
+		reason = ""
+	}
 	if _, err := a.vsi().DeleteLeg(context.Background(), voiceblender.DeleteLegPayload{ID: legID, Reason: reason}); err != nil && !isVSINotFound(err) {
 		a.log.Warn("hangup", "leg_id", legID, "error", err)
 	}

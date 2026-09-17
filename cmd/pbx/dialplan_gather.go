@@ -177,6 +177,11 @@ func (a *app) dpGatherSubmit(exec *dpExec, value string) {
 		target = g.edgeTo(node, dpPortDefault)
 	}
 	a.log.Info("dial plan gather result", "leg_id", exec.legID, "entered", value, "target", target)
+	if value == "" {
+		a.dpTrace(exec.legID, node, "gather: no input → default")
+	} else {
+		a.dpTrace(exec.legID, node, "gather: \""+value+"\"")
+	}
 	if target == "" {
 		a.dpReject(exec, "declined")
 		return
@@ -208,9 +213,11 @@ func (a *app) dpOnSTT(legID, text string, isFinal bool) bool {
 	opts := a.dpGatherOptions(exec.tenantID, node)
 	if val, ok := matchSpeech(text, opts); ok {
 		a.log.Info("dial plan gather speech match", "leg_id", legID, "text", text, "option", val)
+		a.dpTrace(legID, node, "heard \""+text+"\"")
 		a.dpGatherSubmit(exec, val)
 	} else {
 		a.log.Info("dial plan gather speech no match", "leg_id", legID, "text", text)
+		a.dpTrace(legID, node, "heard \""+text+"\" (no match)")
 	}
 	return true
 }

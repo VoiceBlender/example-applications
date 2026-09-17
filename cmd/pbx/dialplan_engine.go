@@ -45,10 +45,18 @@ const dpMaxSteps = 50 // guard against a cyclic/malformed graph
 // runDialplan starts a dial-plan walk for an inbound call. trunkID is the
 // matched trunk ("" if none identified).
 func (a *app) runDialplan(ring *voiceblender.LegRingingEvent, trunkID, tenantID string) {
+	a.startDialplan(ring, trunkID, tenantID, false)
+}
+
+// startDialplan walks the tenant's dial plan for a leg. answered is true when
+// the leg already has media (a console test call's WebRTC leg), so answer nodes
+// pass straight through.
+func (a *app) startDialplan(ring *voiceblender.LegRingingEvent, trunkID, tenantID string, answered bool) {
 	g := a.dialplan.get(tenantID)
 	start := g.start()
 	if start == nil {
 		a.log.Warn("no dial plan start node; rejecting inbound call", "leg_id", ring.LegID)
+		a.dpTrace(ring.LegID, "", "no start node")
 		a.hangup(ring.LegID, "declined")
 		return
 	}
@@ -61,8 +69,10 @@ func (a *app) runDialplan(ring *voiceblender.LegRingingEvent, trunkID, tenantID 
 		from:      sipUser(ring.From),
 		codec:     chooseCodec(a.answerCodecs, ring.OfferedCodecs),
 		startedAt: time.Now(),
+		answered:  answered,
 	}
 	a.dpExecs.Store(ring.LegID, exec)
+	a.dpTrace(ring.LegID, start.ID, "start · from "+exec.from+" · DID "+exec.did)
 	a.log.Info("dial plan start", "leg_id", ring.LegID, "trunk", trunkID, "did", exec.did, "from", exec.from)
 	a.dpWalk(exec, g, g.edgeTo(start.ID, dpPortOut), 0)
 }
@@ -108,9 +118,12 @@ func (a *app) dpWalk(exec *dpExec, g DPGraph, nodeID string, step int) {
 	if node == nil {
 		// Dangling / no edge → default: reject.
 		a.log.Info("dial plan reached dead end; rejecting", "leg_id", exec.legID)
+		a.dpTrace(exec.legID, "", "dead end (unwired output)")
 		a.dpReject(exec, "declined")
 		return
 	}
+
+	a.dpTrace(exec.legID, node.ID, node.Type)
 
 	switch node.Type {
 	case dpMatch:
@@ -118,6 +131,7 @@ func (a *app) dpWalk(exec *dpExec, g DPGraph, nodeID string, step int) {
 		if a.dpMatches(node, exec) {
 			next = dpPortMatch
 		}
+		a.dpTrace(exec.legID, node.ID, "match → "+next)
 		a.dpWalk(exec, g, g.edgeTo(node.ID, next), step+1)
 
 	case dpExt:
