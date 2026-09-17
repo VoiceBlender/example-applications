@@ -448,9 +448,11 @@ func (a *app) applyTrunkToServer(ctx context.Context, t Trunk) error {
 		return nil
 	}
 	resp, err := a.vsi().CreateSIPTrunk(ctx, voiceblender.CreateTrunkRequest{
-		Type: "sip_register",
+		Type:  "sip_register",
+		AppID: a.appID,
 		SIPRegister: &voiceblender.SIPRegisterTrunkSpec{
 			RegistrarURI:   t.RegistrarURI,
+			OutboundProxy:  t.OutboundProxy,
 			Aor:            t.AOR,
 			Username:       t.Username,
 			Password:       t.Password,

@@ -327,7 +327,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 	ctx := context.Background()
 	roomID := "call-" + aLeg
 
-	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID}); err != nil && !isVSIConflict(err) {
+	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID, AppID: a.appID}); err != nil && !isVSIConflict(err) {
 		a.log.Error("create room", "room", roomID, "error", err)
 		a.hangup(aLeg, "unavailable")
 		return
@@ -341,7 +341,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		} else {
 			ringbackPB = pb.PlaybackID
 		}
-	} else if _, err := a.vsi().LegRing(ctx, voiceblender.IDPayload{ID: aLeg}); err != nil {
+	} else if _, err := a.vsi().LegRing(ctx, voiceblender.RingLegPayload{ID: aLeg}); err != nil {
 		a.log.Warn("ring caller (180)", "leg_id", aLeg, "error", err)
 	}
 
@@ -357,6 +357,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		Auth:        auth,
 		Codecs:      meta.codecs,
 		RingTimeout: ringTime,
+		AppID:       a.appID,
 	})
 	if err != nil {
 		a.log.Error("originate outbound leg", "to", toURI, "error", err)

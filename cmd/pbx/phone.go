@@ -276,7 +276,7 @@ func (a *app) phoneOffer(ctx context.Context, sess *phoneSession, sdp string) {
 		sess.send(map[string]any{"type": "webrtc.error", "message": "sdp required"})
 		return
 	}
-	resp, err := a.vsi().WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp})
+	resp, err := a.vsi().WebRTCOffer(ctx, voiceblender.WebRTCOfferRequest{SDP: sdp, AppID: a.appID})
 	if err != nil {
 		a.log.Error("softphone webrtc offer", "account", sess.account, "error", err)
 		sess.send(map[string]any{"type": "webrtc.error", "message": "offer failed"})

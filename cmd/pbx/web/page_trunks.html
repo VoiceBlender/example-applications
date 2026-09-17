@@ -27,6 +27,7 @@
         <option value="ip">IP (static peer, source-IP authenticated)</option>
       </select></div>
       <div class="field reg-field"><label>Registrar URI</label><input type="text" data-ref="trunk-registrar" placeholder="sip:sip.provider.com"></div>
+      <div class="field reg-field"><label>Outbound proxy (optional)</label><input type="text" data-ref="trunk-proxy" placeholder="sip:edge.provider.com:5060"></div>
       <div class="field reg-field"><label>AOR</label><input type="text" data-ref="trunk-aor" placeholder="sip:12345@sip.provider.com"></div>
       <div class="field reg-field"><label>Username</label><input type="text" data-ref="trunk-username" placeholder="12345"></div>
       <div class="field reg-field"><label>Password</label><input type="password" data-ref="trunk-password"></div>
@@ -53,7 +54,8 @@
       const row = el('div', 'row trunk-cols');
       row.appendChild(el('div', null, t.name || '—'));
       row.appendChild(el('div', 'cell-mono', t.type));
-      row.appendChild(el('div', 'cell-sub hide-sm', t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—')));
+      const hop = t.type === 'ip' ? (t.peer_uri || '—') : (t.registrar_uri || '—') + (t.outbound_proxy ? ' via ' + t.outbound_proxy : '');
+      row.appendChild(el('div', 'cell-sub hide-sm', hop));
       row.appendChild(el('div', 'cell-sub hide-sm', t.username || '—'));
       const s = el('div'); s.appendChild(trunkStateChip(t)); row.appendChild(s);
       const act = el('div', 'row-actions');
@@ -76,6 +78,7 @@
     $('trunk-name').value = t ? (t.name || '') : '';
     $('trunk-type').value = t ? (t.type || 'register') : 'register';
     $('trunk-registrar').value = t ? (t.registrar_uri || '') : '';
+    $('trunk-proxy').value = t ? (t.outbound_proxy || '') : '';
     $('trunk-aor').value = t ? (t.aor || '') : '';
     $('trunk-username').value = t ? (t.username || '') : '';
     $('trunk-password').value = '';
@@ -95,6 +98,7 @@
     if (!body.name) { $('trunk-err').textContent = 'Name is required.'; return; }
     if (type === 'register') {
       body.registrar_uri = $('trunk-registrar').value.trim();
+      body.outbound_proxy = $('trunk-proxy').value.trim();
       body.aor = $('trunk-aor').value.trim();
       body.username = $('trunk-username').value.trim();
       body.password = $('trunk-password').value;

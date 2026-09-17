@@ -9,7 +9,7 @@ A small SIP **PBX** built on VoiceBlender and the [voiceblender-go](../../../voi
 
 | Capability | How |
 |---|---|
-| **Outbound trunks (VoiceBlender registers)** | A `register`-type trunk makes VoiceBlender REGISTER to an upstream provider. Status (registered / failed / expired) is shown live on the console from `sip.outbound_registration_*` events. |
+| **Outbound trunks (VoiceBlender registers)** | A `register`-type trunk makes VoiceBlender REGISTER to an upstream provider. An optional **outbound proxy** sets the next hop the REGISTER and the trunk's INVITEs are sent to, leaving the Request-URI at the registrar — needed when the provider's edge proxy is a different host from its registrar domain, or listens on a non-default port (`registrar_uri: sip:sip.provider.com` + `outbound_proxy: sip:edge.provider.com:5284`). Digest auth still targets the registrar. Status (registered / failed / expired) is shown live on the console from `sip.outbound_registration_*` events. |
 | **Inbound IP-authenticated trunks** | An `ip`-type trunk lists trusted peer IPs. Inbound calls whose **source IP** (from the `leg.ringing` event) matches are trusted with **no digest challenge** and routed to the IVR. |
 | **Authenticated extensions (REGISTER + INVITE)** | Inbound REGISTER is challenged against the extension's password (registrar). Every extension INVITE is digest-challenged on the ringing leg before it's routed. |
 | **WebRTC softphones (browser "virtual devices")** | Each extension can have **WebRTC accounts** (username/password/label). Signing into one at `/phone/login` opens a browser softphone that acts as an **extra device for the same extension number**: it rings alongside the SIP registration(s) — first to answer wins — and can place calls as that extension. The browser's WebRTC leg is created once at sign-in and reused for every call (detached from a call's room on hangup, never deleted). See below. |
@@ -66,7 +66,7 @@ The server hands every inbound INVITE to the app to decide, so inbound-call rout
   - **Speech**: options are keywords (`sales,support,billing`). The spoken transcript is matched to an option by whole-phrase, exact word, number-word (`one`→`1`), or fuzzy close-word (`sails`→`sales`) matching. Uses `STT_*` config (`STT_PROVIDER`/`STT_LANGUAGE`/`STT_API_KEY`). A per-node **language** overrides the default.
   - **Both**: accepts a keypress or a spoken keyword, whichever comes first.
 - **Editing**: drag a node's header to move it; click an output dot then an input dot to connect (one edge per output); click a node body to edit its settings; click a wire to delete it; **Save** persists the graph (Redis key `pbx:dialplan`), **Reload** re-pulls it.
-- **Trunk identification**: the server tags register-trunk inbound calls with `TrunkID` (source IP matched the trunk's captured peer socket); the app falls back to a source-IP match for ip trunks. Calls that can't be tied to a trunk still run the graph, so a catch-all rule handles them — inbound calls are never blindly rejected.
+- **Trunk identification**: the server tags register-trunk inbound calls with `TrunkID` (source IP matched the trunk's captured peer socket); the app falls back to a source-IP match for ip trunks. That fallback accepts either the registrar or the outbound proxy host, since a provider fronted by a proxy calls in from the proxy. Calls that can't be tied to a trunk still run the graph, so a catch-all rule handles them — inbound calls are never blindly rejected.
 - **Default**: a fresh install seeds `start → ivr`, so inbound trunk calls reach the IVR out of the box. Edit the graph to route specific DIDs to extensions, play announcements, forward, etc.
 - `play`/`tts` answer the call before playing; `tts` uses the app's `TTS_*` config. REST: `GET`/`PUT /api/dialplan`.
 
@@ -104,7 +104,7 @@ Open the console at <http://localhost:8091/>, **create a workspace at `/signup`*
 
 ## Configuration
 
-See [`.env.example`](./.env.example). Key variables: `VOICEBLENDER_URL`, `REDIS_URL` (required), `LISTEN_ADDR`, `PBX_DOMAIN`, `PBX_REALM`, `SEED_TENANT` (optional dev seed), `SUPERADMIN` (optional cross-tenant admin), `COMPANY_NAME`, `TTS_*`, `ANSWER_CODECS`.
+See [`.env.example`](./.env.example). Key variables: `VOICEBLENDER_URL`, `APP_ID` (default `pbx`; tags everything the PBX creates and filters the VSI event stream to it — untagged events are also accepted unless `APP_ID_STRICT=1`), `REDIS_URL` (required), `LISTEN_ADDR`, `PBX_DOMAIN`, `PBX_REALM`, `SEED_TENANT` (optional dev seed), `SUPERADMIN` (optional cross-tenant admin), `COMPANY_NAME`, `TTS_*`, `ANSWER_CODECS`.
 
 ## Notes & caveats
 

@@ -122,7 +122,7 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 	ctx := context.Background()
 	roomID := "call-" + aLeg
 
-	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID}); err != nil && !isVSIConflict(err) {
+	if _, err := a.vsi().CreateRoom(ctx, voiceblender.CreateRoomRequest{ID: roomID, AppID: a.appID}); err != nil && !isVSIConflict(err) {
 		a.log.Error("create room", "room", roomID, "error", err)
 		a.hangup(aLeg, "unavailable")
 		return
@@ -136,7 +136,7 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 		} else {
 			ringbackPB = pb.PlaybackID
 		}
-	} else if _, err := a.vsi().LegRing(ctx, voiceblender.IDPayload{ID: aLeg}); err != nil {
+	} else if _, err := a.vsi().LegRing(ctx, voiceblender.RingLegPayload{ID: aLeg}); err != nil {
 		a.log.Warn("ring caller (180)", "leg_id", aLeg, "error", err)
 	}
 
@@ -175,7 +175,7 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 			continue
 		}
 		raw, err := a.vsi().CreateLeg(ctx, voiceblender.CreateLegRequest{
-			Type: "sip", To: t.aor, From: fromCLI, Codecs: t.codecs, RingTimeout: ringTime,
+			Type: "sip", To: t.aor, From: fromCLI, Codecs: t.codecs, RingTimeout: ringTime, AppID: a.appID,
 		})
 		if err != nil {
 			a.log.Warn("fork originate leg", "to", t.aor, "error", err)
