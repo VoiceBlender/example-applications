@@ -14,9 +14,10 @@ import (
 // teardown, and the live-calls panel work uniformly.
 
 type forkTarget struct {
-	number string
-	aor    string
-	codecs []string
+	number  string
+	aor     string
+	codecs  []string
+	filters []voiceblender.FilterSpec
 	// sess is set for a WebRTC "virtual device" target: instead of originating a
 	// SIP leg we ring the already-live browser leg (sess.leg()) and wait for the
 	// browser to accept over its phone WS. nil ⇒ ordinary SIP originate.
@@ -43,7 +44,8 @@ type forkGroup struct {
 	kind           string
 	ringbackPB     string
 	startedAt      time.Time
-	onNoAnswer     func() // resume the dial plan on the caller if nobody answers
+	callerFilters  []voiceblender.FilterSpec // applied when the caller's leg is answered
+	onNoAnswer     func()                    // resume the dial plan on the caller if nobody answers
 
 	mu         sync.Mutex
 	candidates map[string]forkCand // candidate legID → candidate
@@ -148,7 +150,8 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 		roomID: roomID, tenantID: meta.tenantID, aLeg: aLeg, callerAnswered: callerAnswered,
 		from: meta.from, to: meta.to, via: meta.via, kind: meta.kind,
 		ringbackPB: ringbackPB, startedAt: time.Now(), onNoAnswer: meta.onNoAnswer,
-		candidates: make(map[string]forkCand),
+		callerFilters: meta.callerFilters,
+		candidates:    make(map[string]forkCand),
 	}
 
 	// Each target either originates a SIP leg (no RoomID, so none auto-bridges;
@@ -175,7 +178,8 @@ func (a *app) startFork(aLeg string, targets []forkTarget, fromCLI string, calle
 			continue
 		}
 		raw, err := a.vsi().CreateLeg(ctx, voiceblender.CreateLegRequest{
-			Type: "sip", To: t.aor, From: fromCLI, Codecs: t.codecs, RingTimeout: ringTime, AppID: a.appID,
+			Type: "sip", To: t.aor, From: fromCLI, Codecs: t.codecs, Filters: t.filters,
+			RingTimeout: ringTime, AppID: a.appID,
 		})
 		if err != nil {
 			a.log.Warn("fork originate leg", "to", t.aor, "error", err)
@@ -286,7 +290,7 @@ func (a *app) onForkConnected(g *forkGroup, winner string) {
 		}
 	}
 	if !g.callerAnswered {
-		if _, err := a.vsi().AnswerLeg(ctx, voiceblender.AnswerLegPayload{ID: g.aLeg}); err != nil {
+		if _, err := a.vsi().AnswerLeg(ctx, voiceblender.AnswerLegPayload{ID: g.aLeg, Filters: g.callerFilters}); err != nil {
 			a.log.Error("answer caller on fork connect", "leg_id", g.aLeg, "error", err)
 			a.forks.remove(g)
 			// winner is a fresh candidate leg — for a browser, keep it alive.

@@ -88,5 +88,99 @@ window.PBX = (function () {
     setInterval(() => { if (tickFn) tickFn(); }, 1000);
   });
 
-  return { $, el, cell2, extStateChip, trunkStateChip, callStateChip, fmtDur, onSnapshot, onTick };
+
+  // ---- audio filters -------------------------------------------------------
+  // Filters are stored structurally ([{type, params}]) but edited as the same
+  // compact string AUDIO_FILTERS uses: "bandpass:low_hz=300, denoise".
+  const FILTER_PRESETS = [
+    ['denoise', 'denoise'],
+    ['denoise_gtcrn', 'denoise_gtcrn'],
+    ['bandpass', 'bandpass:low_hz=300:high_hz=3400'],
+    ['gain', 'gain:volume=2'],
+    ['pitch', 'pitch:semitones=-5'],
+    ['robotic', 'robotic'],
+    ['vocoder', 'vocoder'],
+  ];
+
+  // denoise (RNNoise) and denoise_gtcrn (GTCRN) are alternatives and a chain
+  // may hold only one, so the chip replaces rather than appends. It also leads:
+  // it is corrective, and an enhancer placed after an effect fights what it is
+  // handed.
+  const DENOISERS = ['denoise', 'denoise_gtcrn'];
+  const isDenoise = t => DENOISERS.includes(t);
+
+  function addFilter(cur, value) {
+    let items = (cur || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (isDenoise(value.split(':')[0])) {
+      return [value].concat(items.filter(s => !isDenoise(s.split(':')[0]))).join(', ');
+    }
+    items.push(value);
+    return items.join(', ');
+  }
+
+  // denoiseKind reports which denoiser a chain runs, or '' for none.
+  function denoiseKind(specs) {
+    const f = (specs || []).find(f => isDenoise(f.type));
+    return f ? f.type : '';
+  }
+
+  // withDenoise returns the chain with the given denoiser at the front, or with
+  // none when kind is '', leaving every other filter as it was.
+  function withDenoise(specs, kind) {
+    const rest = (specs || []).filter(f => !isDenoise(f.type));
+    return kind ? [{ type: kind }].concat(rest) : rest;
+  }
+
+  function parseFilters(s) {
+    s = (s || '').trim();
+    if (!s) return null; // blank = inherit the server default
+    return s.split(',').map(x => x.trim()).filter(Boolean).map(item => {
+      const parts = item.split(':');
+      const spec = { type: parts[0].trim().toLowerCase() }, params = {};
+      parts.slice(1).forEach(kv => {
+        const i = kv.indexOf('=');
+        if (i > 0) {
+          const v = parseFloat(kv.slice(i + 1));
+          if (!isNaN(v)) params[kv.slice(0, i).trim()] = v;
+        }
+      });
+      if (Object.keys(params).length) spec.params = params;
+      return spec;
+    });
+  }
+
+  function formatFilters(list) {
+    if (!list || !list.length) return '';
+    return list.map(f => {
+      const p = f.params || {};
+      return Object.keys(p).sort().reduce((s, k) => s + ':' + k + '=' + p[k], f.type);
+    }).join(', ');
+  }
+
+  // filterChips renders the built-in filters as clickable chips. A datalist
+  // alone is easy to miss: browsers only reveal it once you type, so the field
+  // reads as a plain text box and the filters stay invisible.
+  function filterChips(host, input) {
+    host.textContent = '';
+    FILTER_PRESETS.forEach(([label, value]) => {
+      const b = el('button', 'filter-chip', '+ ' + label);
+      b.type = 'button'; b.title = value;
+      b.onclick = () => {
+        input.value = addFilter(input.value, value);
+        // Dispatch so any listener (the live-calls draft tracker) sees it; a
+        // programmatic value change fires no event on its own.
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      host.appendChild(b);
+    });
+    const clear = el('button', 'filter-chip clear', 'clear');
+    clear.type = 'button';
+    clear.onclick = () => {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    host.appendChild(clear);
+  }
+
+  return { $, el, cell2, parseFilters, formatFilters, filterChips, denoiseKind, withDenoise, extStateChip, trunkStateChip, callStateChip, fmtDur, onSnapshot, onTick };
 })();

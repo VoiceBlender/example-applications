@@ -275,7 +275,7 @@ func (a *app) extensionTargets(tenantID, number string) []forkTarget {
 	}
 	var out []forkTarget
 	if aor, reg := a.exts.registeredAOR(callee.Username); reg {
-		out = append(out, forkTarget{number: callee.Number, aor: aor, codecs: callee.Codecs})
+		out = append(out, forkTarget{number: callee.Number, aor: aor, codecs: callee.Codecs, filters: callee.Filters})
 	}
 	for _, s := range a.phones.liveForExt(tenantID, callee.Number) {
 		out = append(out, forkTarget{number: callee.Number, sess: s})

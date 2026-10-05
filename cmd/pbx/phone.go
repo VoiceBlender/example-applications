@@ -521,7 +521,7 @@ func (a *app) blindTransferToDesk(sess *phoneSession) {
 	}
 	peer := a.releaseForTransfer(sess, b, leg)
 	a.startBridge(peer, aor, sess.extNumber, nil, true,
-		callMeta{tenantID: sess.tenantID, from: sess.extNumber, to: ext.Number, kind: "internal", codecs: ext.Codecs})
+		callMeta{tenantID: sess.tenantID, from: sess.extNumber, to: ext.Number, kind: "internal", codecs: ext.Codecs, filters: ext.Filters})
 	a.notifyChanged()
 	a.log.Info("transfer to desk phone", "account", sess.account, "extension", ext.Number, "peer", peer)
 }

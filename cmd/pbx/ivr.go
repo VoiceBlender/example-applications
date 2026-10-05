@@ -177,7 +177,7 @@ func (a *app) ivrSubmit(legID, number string) {
 	if fromLabel == "" {
 		fromLabel = "external"
 	}
-	a.startBridge(legID, aor, from, nil, true, callMeta{tenantID: c.tenantID, from: fromLabel, to: callee.Number, kind: "inbound", via: a.trunkName(c.trunkID), codecs: callee.Codecs})
+	a.startBridge(legID, aor, from, nil, true, callMeta{tenantID: c.tenantID, from: fromLabel, to: callee.Number, kind: "inbound", via: a.trunkName(c.trunkID), codecs: callee.Codecs, filters: callee.Filters})
 }
 
 // ivrRetry re-prompts after a bad entry, hanging up after too many attempts.

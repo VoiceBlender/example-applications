@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -12,14 +13,20 @@ import (
 // callMeta describes a call for the live-calls panel and carries the codec
 // preference for the outbound (B) leg.
 type callMeta struct {
-	tenantID   string   // owning tenant (for console call isolation)
-	from       string   // caller label (e.g. "1001")
-	to         string   // callee label (e.g. "1002" or a dialed number)
-	kind       string   // internal | external | inbound | forward
-	via        string   // trunk name, when the call is from/to a trunk
-	codecs     []string // codec preference order for the outbound leg (nil = default)
-	ringTime   int      // seconds to ring the callee (0 = default 60)
-	onNoAnswer func()   // called instead of hanging up the caller when nobody answers (nil = hang up)
+	tenantID string                    // owning tenant (for console call isolation)
+	from     string                    // caller label (e.g. "1001")
+	to       string                    // callee label (e.g. "1002" or a dialed number)
+	kind     string                    // internal | external | inbound | forward
+	via      string                    // trunk name, when the call is from/to a trunk
+	codecs   []string                  // codec preference order for the outbound leg (nil = default)
+	filters  []voiceblender.FilterSpec // ingress audio processing for the outbound leg (nil = server default)
+	// callerFilters is the calling extension's own chain, applied to its
+	// inbound leg when we answer it. Filtering is ingress-only, so a call is
+	// only fully covered when both parties' chains are applied: `filters` for
+	// the leg we originate, this for the leg that called us.
+	callerFilters []voiceblender.FilterSpec
+	ringTime      int    // seconds to ring the callee (0 = default 60)
+	onNoAnswer    func() // called instead of hanging up the caller when nobody answers (nil = hang up)
 }
 
 // bridge is one active two-party call: the caller leg (A) and the outbound
@@ -41,6 +48,12 @@ type bridge struct {
 	kind      string
 	via       string
 	startedAt time.Time
+
+	// callerFilters is applied when the caller's inbound leg is answered, and
+	// calleeFilters when the outbound leg is created. Both are updated when
+	// the chain is changed mid-call, so the live-calls view stays truthful.
+	callerFilters []voiceblender.FilterSpec
+	calleeFilters []voiceblender.FilterSpec
 
 	onNoAnswer func() // resume the dial plan on the caller if the callee never answers
 
@@ -121,14 +134,42 @@ func (b *bridge) view() callView {
 		state, since = "connected", b.connectedAt
 	}
 	return callView{
-		ID:    b.roomID,
-		From:  b.from,
-		To:    b.to,
-		Kind:  b.kind,
-		Via:   b.via,
-		State: state,
-		Since: since.UTC().Format(time.RFC3339),
+		ID:       b.roomID,
+		From:     b.from,
+		To:       b.to,
+		Kind:     b.kind,
+		Via:      b.via,
+		State:    state,
+		Since:    since.UTC().Format(time.RFC3339),
+		ALeg:     b.aLeg,
+		BLeg:     b.bLeg,
+		AFilters: b.callerFilters,
+		BFilters: b.calleeFilters,
+		ALabel:   b.from,
+		BLabel:   b.to,
 	}
+}
+
+// setLegFilters changes the audio chain on one leg of a live call and records
+// the result on its bridge, so the live-calls view keeps showing what is
+// actually running rather than what was configured at setup.
+func (a *app) setLegFilters(ctx context.Context, legID string, filters []voiceblender.FilterSpec) error {
+	b, ok := a.bridges.get(legID)
+	if !ok {
+		return fmt.Errorf("no active call for that leg")
+	}
+	if _, err := a.vsi().SetLegFilters(ctx, voiceblender.SetLegFiltersPayload{ID: legID, Filters: filters}); err != nil {
+		return err
+	}
+	b.mu.Lock()
+	if legID == b.aLeg {
+		b.callerFilters = filters
+	} else {
+		b.calleeFilters = filters
+	}
+	b.mu.Unlock()
+	a.notifyChanged()
+	return nil
 }
 
 // bridgeRegistry tracks active bridges, indexed by both leg IDs so either
@@ -275,9 +316,11 @@ func (a *app) callInternal(aLeg string, caller, callee Extension) {
 		a.hangup(aLeg, "unavailable")
 		return
 	}
-	meta := callMeta{tenantID: callee.TenantID, from: caller.Number, to: callee.Number, kind: "internal"}
+	meta := callMeta{tenantID: callee.TenantID, from: caller.Number, to: callee.Number, kind: "internal",
+		callerFilters: caller.Filters}
 	if len(targets) == 1 && targets[0].sess == nil {
 		meta.codecs = callee.Codecs
+		meta.filters = callee.Filters
 		a.startBridge(aLeg, targets[0].aor, caller.Number, nil, false, meta)
 		return
 	}
@@ -356,6 +399,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		RoomID:      roomID,
 		Auth:        auth,
 		Codecs:      meta.codecs,
+		Filters:     meta.filters,
 		RingTimeout: ringTime,
 		AppID:       a.appID,
 	})
@@ -380,6 +424,7 @@ func (a *app) startBridge(aLeg, toURI, fromCLI string, auth *voiceblender.SIPAut
 		from: meta.from, to: meta.to, kind: meta.kind, via: meta.via, startedAt: time.Now(),
 		onNoAnswer:     meta.onNoAnswer,
 		callerAnswered: callerAnswered, ringbackPB: ringbackPB,
+		callerFilters: meta.callerFilters,
 	})
 	a.calls.Delete(aLeg) // if the caller was in the IVR, it's a live call now
 	a.notifyChanged()
@@ -421,7 +466,7 @@ func (a *app) connectCaller(b *bridge) {
 	}
 
 	if !b.answered() {
-		if _, err := a.vsi().AnswerLeg(ctx, voiceblender.AnswerLegPayload{ID: b.aLeg}); err != nil {
+		if _, err := a.vsi().AnswerLeg(ctx, voiceblender.AnswerLegPayload{ID: b.aLeg, Filters: b.callerFilters}); err != nil {
 			a.log.Error("answer caller on connect", "leg_id", b.aLeg, "error", err)
 			a.hangup(b.bLeg, "")
 			return

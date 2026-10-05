@@ -110,6 +110,15 @@ type callView struct {
 	Via   string `json:"via,omitempty"` // trunk name, when the call is from/to a trunk
 	State string `json:"state"`         // ringing | connected | dial plan | menu | ivr
 	Since string `json:"since"`         // RFC3339 anchor for the client's duration counter
+
+	// Leg ids and the audio chain running on each side, for the live-calls
+	// filter controls. Empty for call shapes with only a caller leg.
+	ALeg     string                    `json:"a_leg,omitempty"`
+	BLeg     string                    `json:"b_leg,omitempty"`
+	AFilters []voiceblender.FilterSpec `json:"a_filters,omitempty"`
+	BFilters []voiceblender.FilterSpec `json:"b_filters,omitempty"`
+	ALabel   string                    `json:"a_label,omitempty"`
+	BLabel   string                    `json:"b_label,omitempty"`
 }
 
 type snapshot struct {
@@ -207,6 +216,7 @@ func (a *app) serveHTTP() http.Handler {
 	mux.Handle("GET /dialplan", gated(func(w http.ResponseWriter, r *http.Request) { renderPage(w, "dialplan", "PBX · Dial plan") }))
 	mux.Handle("GET /config", gated(func(w http.ResponseWriter, r *http.Request) { renderPage(w, "config", "PBX · Configuration") }))
 
+	mux.Handle("PUT /api/calls/{legID}/filters", gated(a.handleSetCallFilters))
 	mux.Handle("GET /api/extensions", gated(a.handleListExtensions))
 	mux.Handle("POST /api/extensions", gated(a.handleCreateExtension))
 	mux.Handle("PUT /api/extensions/{id}", gated(a.handleUpdateExtension))
@@ -232,6 +242,43 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 // ── extensions CRUD ────────────────────────────────────────────────────────
+
+// handleSetCallFilters changes the audio chain on one leg of a live call.
+func (a *app) handleSetCallFilters(w http.ResponseWriter, r *http.Request) {
+	legID := r.PathValue("legID")
+	var req struct {
+		Filters []voiceblender.FilterSpec `json:"filters"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	b, ok := a.bridges.get(legID)
+	if !ok || !a.ownsCall(b, tenantFromCtx(r)) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if req.Filters == nil {
+		req.Filters = []voiceblender.FilterSpec{}
+	}
+	if err := a.setLegFilters(r.Context(), legID, req.Filters); err != nil {
+		// VoiceBlender rejects a change that would alter the chain's working
+		// rate; pass its reason through rather than flattening it.
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// ownsCall keeps one tenant from reaching another's calls.
+func (a *app) ownsCall(b *bridge, tenant string) bool {
+	if tenant == "" {
+		return true // superadmin console
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tenantID == tenant
+}
 
 func (a *app) handleListExtensions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"extensions": a.exts.views(tenantFromCtx(r))})

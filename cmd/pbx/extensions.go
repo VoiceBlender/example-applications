@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	voiceblender "github.com/VoiceBlender/voiceblender-go"
 	"sort"
 	"strings"
 	"sync"
@@ -33,6 +34,16 @@ type Extension struct {
 	// RegExpiry caps the granted REGISTER expiry (seconds) for this extension —
 	// the phone re-registers at least this often. 0 = default (defaultRegExpiry).
 	RegExpiry int `json:"reg_expiry,omitempty"`
+	// Filters is the audio processing chain applied to audio arriving from this
+	// extension's phone, before it reaches the room. Use it for extensions in
+	// noisy places — a warehouse handset, a phone on a shop floor:
+	//
+	//	"filters": [{"type": "denoise"}]
+	//
+	// Empty = the server default (AUDIO_FILTERS). Processing is ingress-only,
+	// so each extension cleans its own audio and both directions of a call are
+	// covered by the two extensions' own settings.
+	Filters []voiceblender.FilterSpec `json:"filters,omitempty"`
 	// WebRTCAccounts are browser-softphone logins that act as extra devices for
 	// this same extension number: signing into one establishes a live WebRTC leg
 	// that rings alongside the SIP registration(s) and can place calls as this
@@ -75,18 +86,19 @@ type regStatus struct {
 
 // extView is the password-free projection sent to the web UI.
 type extView struct {
-	ID         string   `json:"id"`
-	TenantID   string   `json:"tenant_id,omitempty"`
-	Number     string   `json:"number"`
-	Name       string   `json:"name"`
-	Username   string   `json:"username"`
-	Registered bool     `json:"registered"`
-	Contact    string   `json:"contact,omitempty"`
-	Source     string   `json:"source,omitempty"` // ip:port the REGISTER arrived from
-	UserAgent  string   `json:"user_agent,omitempty"`
-	ExpiresAt  string   `json:"expires_at,omitempty"`
-	Codecs     []string `json:"codecs,omitempty"`
-	RegExpiry  int      `json:"reg_expiry,omitempty"`
+	ID         string                    `json:"id"`
+	TenantID   string                    `json:"tenant_id,omitempty"`
+	Number     string                    `json:"number"`
+	Name       string                    `json:"name"`
+	Username   string                    `json:"username"`
+	Registered bool                      `json:"registered"`
+	Contact    string                    `json:"contact,omitempty"`
+	Source     string                    `json:"source,omitempty"` // ip:port the REGISTER arrived from
+	UserAgent  string                    `json:"user_agent,omitempty"`
+	ExpiresAt  string                    `json:"expires_at,omitempty"`
+	Codecs     []string                  `json:"codecs,omitempty"`
+	RegExpiry  int                       `json:"reg_expiry,omitempty"`
+	Filters    []voiceblender.FilterSpec `json:"filters,omitempty"`
 	// WebRTCDevices lists this extension's WebRTC softphone accounts (no
 	// password), each with live presence joined from the phone registry.
 	WebRTCDevices []webRTCDeviceView `json:"webrtc_devices,omitempty"`
@@ -397,7 +409,7 @@ func (r *extRegistry) reconcile(present map[string]regStatus) {
 
 // viewOf projects one extension into its UI view (caller holds the read lock).
 func (r *extRegistry) viewOf(e *Extension) extView {
-	v := extView{ID: e.ID, TenantID: e.TenantID, Number: e.Number, Name: e.Name, Username: e.Username, Codecs: e.Codecs, RegExpiry: e.RegExpiry}
+	v := extView{ID: e.ID, TenantID: e.TenantID, Number: e.Number, Name: e.Name, Username: e.Username, Codecs: e.Codecs, RegExpiry: e.RegExpiry, Filters: e.Filters}
 	if s := r.reg[strings.ToLower(e.Username)]; s != nil {
 		v.Registered = s.Registered
 		v.Contact = s.Contact
