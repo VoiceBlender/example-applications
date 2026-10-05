@@ -8,7 +8,7 @@ Reference applications built on [VoiceBlender](../VoiceBlender) using the [voice
 |---|---|
 | [contact-centre](./cmd/contact-centre/) | Complete inbound SIP contact centre in one binary. UK ringback → welcome TTS → per-caller waiting room with hold music and live queue-position announcements → one-click *Take call* on the agent dashboard → bridge with mute/hold/resume/hangup → live per-speaker transcription archived into the call log. Supervisor dashboard adds silent monitor (*Listen*), private side-channel (*Whisper*), and a rolling Service KPIs board (SL, ASA, AHT, Abandon, Longest Wait). Pluggable call-log backend (memory / Redis), optional static-password auth, configurable codec preference order. |
 | [ivr](./cmd/ivr/) | Multi-department IVR. UK ringback → welcome TTS → DTMF main menu → routes the caller into a department room (sales / support / billing) with looping hold music and a repeating hold message, or hands off to a Deepgram AI voice agent on `0`. |
-| [pbx](./cmd/pbx/) | **Multi-tenant SIP PBX** in one binary. Authenticated extensions (REGISTER + INVITE digest), register/IP trunks, extension↔extension and extension→external calls, a dial-by-extension IVR, and a **visual inbound dial-plan editor** (match / gather DTMF+speech / ext / ivr / forward / play / TTS / reject). **Browser WebRTC softphones** act as extra devices per extension — ring alongside the SIP phone, place calls, hold / blind-transfer (incl. "to my desk phone") / DND / mic-selector / ringtone / call-history + contacts. Handles inbound SIP REFER (accept → re-bridge), self-service tenant signup with a cross-tenant superadmin console, on-hold music, and Redis-persisted config/sessions. |
+| [pbx](./cmd/pbx/) | **Multi-tenant SIP PBX** in one binary. Authenticated extensions (REGISTER + INVITE digest), register/IP trunks, extension↔extension and extension→external calls, a dial-by-extension IVR, and a **visual inbound dial-plan editor** (match / gather DTMF+speech / ext / ivr / forward / play / TTS / reject). **Browser WebRTC softphones** act as extra devices per extension — ring alongside the SIP phone, place calls, hold / blind-transfer (incl. "to my desk phone") / DND / mic-selector / ringtone / call-history + contacts. Handles inbound SIP REFER (accept → re-bridge), self-service tenant signup with a cross-tenant superadmin console, on-hold music, and Redis-persisted config/sessions. **Per-extension audio filters** apply an ingress processing chain to a phone's own audio in both call directions — `denoise` for a handset somewhere noisy, `bandpass`/`gain`, or `robotic`/`vocoder` voice effects — and the live-calls board can change a leg's chain mid-call, including a one-click denoise toggle. |
 | [ptt](./cmd/ptt/) | **Browser push-to-talk** (walkie-talkie). Username-only login → create public or private rooms → hold a button (or Space) to talk over WebRTC. **Single-speaker floor control** (a second presser gets "busy") and **fully on-demand media**: the VoiceBlender room and every WebRTC leg are created on the press and torn down on the release, so nothing is allocated while a room is quiet. Private rooms use a shareable invite code/link; live presence + "who's talking"; Redis-persisted users/sessions/rooms. |
 | [interpreter](./cmd/interpreter/) | **Live simultaneous interpreter.** Two people, two languages, one WebRTC conversation — each hears **only** the other's translated voice, with live captions of the original and the translation. Cascades Deepgram Flux STT (or Speechmatics, for languages Flux cannot do) → DeepL → ElevenLabs Flash TTS, and uses the room **routing matrix** to silence the direct path between the participants plus per-leg `leg_tts` to inject each translation privately. Hides the synthesis cost behind the speaker's last few hundred milliseconds by translating on Flux's **eager end-of-turn**, staging the audio with `leg_tts_preflight`, and committing it the instant the turn ends (~250–450 ms speaker-stops-to-listener-hears). Each speaker picks a voice gender and is heard in a matching voice on the far side. Optional static login, and idle/duration session limits so an abandoned tab stops billing STT. No datastore. |
 
@@ -30,6 +30,26 @@ go run ./cmd/<app>
 ```
 
 See each app's own README for required configuration and prerequisites.
+
+### Building against a local SDK checkout
+
+By default the apps build against the published `voiceblender-go` version pinned in `go.mod`. To
+exercise unreleased SDK changes, create a Go workspace pointing at a sibling checkout:
+
+```bash
+cat > go.work <<'EOF'
+go 1.25.0
+
+use (
+	.
+	../voiceblender-go
+)
+EOF
+go build ./...
+```
+
+`go.work` is git-ignored, so this stays a local override. Remove it — or run with `GOWORK=off` — to
+go back to the pinned version.
 
 ## Docker
 

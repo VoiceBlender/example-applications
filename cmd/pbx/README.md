@@ -53,6 +53,42 @@ The management console is split into pages behind a shared top nav — **Live ca
 
 **Per-extension codecs.** Each extension can specify an ordered codec preference list (e.g. `opus, PCMA, PCMU`) in the console. When a call rings that extension, the outbound INVITE offers exactly those codecs in that priority order (`CreateLegRequest.Codecs`); blank means the server/global default. (This is distinct from `ANSWER_CODECS`, which is the answer-codec order for inbound trunk calls landing in the IVR/dial plan.)
 
+**Per-extension audio filters.** Each extension can carry an ordered audio processing chain, applied to audio arriving *from* that extension's phone before it reaches the room — so the far party, any recording, and any transcription all hear the processed audio. The chain can correct audio (suppress noise, band-limit, adjust level) or change it (a vocoder-style voice effect). Configure it as `filters` on the extension:
+
+```json
+{
+  "number": "1001",
+  "name": "Warehouse handset",
+  "filters": [{ "type": "denoise" }]
+}
+```
+
+Or as an effect — this extension is heard by everyone as a vocoder-style robot voice:
+
+```json
+{
+  "number": "1099",
+  "name": "Robot demo line",
+  "filters": [{ "type": "robotic", "params": { "depth": 0.9 } }]
+}
+```
+
+Use `denoise` for extensions in noisy places — a handset on a shop floor, a phone next to machinery — rather than turning processing on globally; `robotic` is a demo effect worth pointing one extension at to hear the pipeline working. Available filters are `denoise` (background noise suppression, RNNoise), `denoise_gtcrn` (alternative GTCRN noise suppression at lower CPU; it runs at 16 kHz, so in a 48 kHz room it drops content above 8 kHz — use one denoiser or the other, not both), `bandpass` (`low_hz`, `high_hz`), `gain` (`volume`, `-8` to `8`) `pitch` (shift the voice by semitones — `semitones`, `mix`), `robotic` (a metallic voice effect that stays easy to follow — `pitch_hz`, `depth`, `mix`) and `vocoder` (a stronger, fully synthetic robot voice that is noticeably harder to understand — `carrier_hz`, `bands`, `mix`); a chain may hold at most four, and they run in the order given — put corrective filters first and effects last, since `denoise` placed after `robotic` would fight the carrier it is handed. Leave the field blank to inherit the server default (`AUDIO_FILTERS`). Note that opting a *single* extension out of a configured server default is not expressible from here: `CreateLegRequest.Filters` is `omitempty` in the Go SDK, so an empty chain marshals identically to an absent one. The HTTP API itself accepts `"filters": []` for exactly that — it is the generated client that cannot send it.
+
+Processing is ingress-only, so each extension cleans its own contribution: in a call between 1001 and 1002, both directions are covered by the two extensions' own settings. The chain is applied in both call directions — on the leg the PBX originates towards a phone when that extension is *called* (single-target and forked multi-device paths), and on the extension's own inbound leg when it *places* a call. Inbound trunk calls have no extension on the caller side, so only the callee's chain applies there.
+
+**Changing filters during a call.** The live-calls board on `/` has a **filters** toggle on each bridged call. It opens a panel with one editor per side of the call — click chips to build a chain, or type it — and applying it changes that leg's processing on the next audio block, with no interruption to the call. The board shows what is actually running on each side, not what was configured at setup.
+
+Each editor also carries a one-click **denoise** row — `off` / `rnnoise` / `gtcrn` — which switches only the denoiser and applies immediately, leaving the rest of the chain in place. Judging noise suppression by ear, and comparing the two models, needs the switch to happen while the same person is still talking, which typing a chain and clicking apply does not give you. A rejection shows its reason next to the buttons.
+
+One change is refused, with the reason shown inline: a leg outside a room has no chain to change.
+
+Everything else applies while the call runs, including enabling, disabling and switching between `denoise` and `denoise_gtcrn`. `denoise` runs at the room's rate; `denoise_gtcrn` moves a 48 kHz room's chain to 16 kHz, rebuilt behind a short fade so it lands as a soft dip rather than a click. Note that noise suppression takes about a second to reach full effect after it is switched on.
+
+This is the quickest way to hear what each filter does: start a call between two extensions, open the panel, and switch effects while talking.
+
+Noise suppression removes background *noise*, not competing speech — a colleague talking nearby will still come through. `robotic` is a voice effect, not voice scrambling: the words stay fully intelligible, so it does not conceal what is said or who is saying it. See [API.md](../../../VoiceBlender/API.md#audio-filters) for the full filter reference.
+
 ## Inbound dial plan (visual flow editor)
 
 ![Inbound dial plan editor](img/diaplan.png)

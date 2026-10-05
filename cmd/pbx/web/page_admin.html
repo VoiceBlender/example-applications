@@ -64,6 +64,13 @@ body{background:var(--bg); color:var(--fg); font-family:var(--font-sans); font-s
 .close:hover{border-color:var(--red); color:var(--red);}
 .modal-body{padding:20px;}
 .field{margin-bottom:13px;} .field.hidden{display:none;}
+.filter-chips{display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;}
+.filter-chip{font-family:var(--font-mono); font-size:10px; letter-spacing:0.1em; text-transform:uppercase;
+  background:transparent; border:1px dashed var(--border-bright); color:var(--fg-dim); padding:5px 9px;
+  cursor:pointer; width:auto;}
+.filter-chip:hover{border-color:var(--amber); color:var(--amber);}
+.filter-chip.clear{border-style:solid;}
+.filter-chip.clear:hover{border-color:var(--red); color:var(--red);}
 label{display:block; font-family:var(--font-mono); font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--fg-mute); margin-bottom:6px;}
 input,select{width:100%; background:var(--bg); border:1px solid var(--border-bright); color:var(--fg); padding:10px 12px; font-family:var(--font-mono); font-size:14px; outline:none;}
 input:focus,select:focus{border-color:var(--amber);}
@@ -160,6 +167,9 @@ input:focus,select:focus{border-color:var(--amber);}
     <div class="field"><label>SIP username — blank = auto &lt;tenant&gt;-&lt;number&gt;</label><input id="ext-username" placeholder="auto"></div>
     <div class="field"><label>Password (blank = unchanged on edit)</label><input id="ext-password" type="password"></div>
     <div class="field"><label>Codecs — comma-separated (blank = default)</label><input id="ext-codecs" placeholder="opus, PCMA, PCMU"></div>
+    <div class="field"><label>Audio filters — applied to audio from this phone (blank = server default)</label><input id="ext-filters" placeholder="blank = server default" list="filter-list"></div>
+    <div class="filter-chips" id="ext-filter-chips"></div>
+    <datalist id="filter-list"><option value="denoise"><option value="denoise_gtcrn"><option value="bandpass:low_hz=300:high_hz=3400"><option value="bandpass:low_hz=300:high_hz=3400, denoise"><option value="bandpass:low_hz=300:high_hz=3400, denoise_gtcrn"><option value="pitch:semitones=-5"><option value="pitch:semitones=5"><option value="robotic"><option value="robotic:depth=0.9"><option value="vocoder"></datalist>
     <div class="field"><label>Registration expiry (seconds, blank = 60)</label><input id="ext-regexp" type="number"></div>
     <div class="err" id="ext-err"></div>
     <div class="foot"><button class="primary" id="ext-save">Save</button></div>
@@ -261,14 +271,93 @@ input:focus,select:focus{border-color:var(--amber);}
     $('ext-password').value = '';
     $('ext-codecs').value = e && e.codecs ? e.codecs.join(', ') : '';
     $('ext-regexp').value = e && e.reg_expiry ? e.reg_expiry : '';
+    $('ext-filters').value = formatFilters(e && e.filters);
+    renderFilterChips('ext-filter-chips', 'ext-filters');
     $('ext-err').textContent = '';
     $('ext-modal').hidden = false; $('ext-number').focus();
   }
+
+  // Audio filters are stored structurally ([{type, params}]) but edited as the
+  // same compact string the AUDIO_FILTERS env var uses, e.g.
+  // "bandpass:low_hz=300:high_hz=3400, denoise".
+  function parseFilters(s) {
+    s = (s || '').trim();
+    if (!s) return null; // blank = inherit the server default
+    return s.split(',').map(x => x.trim()).filter(Boolean).map(item => {
+      const parts = item.split(':');
+      const spec = { type: parts[0].trim().toLowerCase() }, params = {};
+      parts.slice(1).forEach(kv => {
+        const i = kv.indexOf('=');
+        if (i > 0) {
+          const v = parseFloat(kv.slice(i + 1));
+          if (!isNaN(v)) params[kv.slice(0, i).trim()] = v;
+        }
+      });
+      if (Object.keys(params).length) spec.params = params;
+      return spec;
+    });
+  }
+  function formatFilters(list) {
+    if (!list || !list.length) return '';
+    return list.map(f => {
+      const p = f.params || {};
+      return Object.keys(p).sort().reduce((s, k) => s + ':' + k + '=' + p[k], f.type);
+    }).join(', ');
+  }
+
+
+  // Built-in filters, surfaced as clickable chips. A datalist alone is easy to
+  // miss: browsers only reveal it once you type, so the field reads as a plain
+  // free-text box and the available filters stay invisible.
+  const FILTER_PRESETS = [
+    ['denoise', 'denoise'],
+    ['denoise_gtcrn', 'denoise_gtcrn'],
+    ['bandpass', 'bandpass:low_hz=300:high_hz=3400'],
+    ['gain', 'gain:volume=2'],
+    ['pitch', 'pitch:semitones=-5'],
+    ['robotic', 'robotic'],
+    ['vocoder', 'vocoder'],
+  ];
+
+  // The denoise variants are alternatives, so adding one has to displace any
+  // other; a chain naming two is rejected outright.
+  function addFilter(cur, value) {
+    const isDenoise = t => t === 'denoise' || t === 'denoise_gtcrn';
+    let items = (cur || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (isDenoise(value.split(':')[0])) {
+      // Denoise leads: it is corrective, and an enhancer placed after an effect
+      // fights what it is handed.
+      return [value].concat(items.filter(s => !isDenoise(s.split(':')[0]))).join(', ');
+    }
+    items.push(value);
+    return items.join(', ');
+  }
+  function renderFilterChips(hostRef, inputRef) {
+    const host = $(hostRef);
+    if (!host) return;
+    host.textContent = '';
+    FILTER_PRESETS.forEach(([label, value]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'filter-chip'; b.textContent = '+ ' + label;
+      b.title = value;
+      b.onclick = () => {
+        $(inputRef).value = addFilter($(inputRef).value, value);
+      };
+      host.appendChild(b);
+    });
+    const clear = document.createElement('button');
+    clear.type = 'button'; clear.className = 'filter-chip clear'; clear.textContent = 'clear';
+    clear.onclick = () => { $(inputRef).value = ''; };
+    host.appendChild(clear);
+  }
+
   async function saveExt() {
     const id = $('ext-id').value;
     const body = { tenant_id: $('ext-tenant').value, number: $('ext-number').value.trim(), name: $('ext-name').value.trim(),
       username: $('ext-username').value.trim(), password: $('ext-password').value,
       codecs: $('ext-codecs').value.split(',').map(s => s.trim()).filter(Boolean) };
+    const filters = parseFilters($('ext-filters').value);
+    if (filters) body.filters = filters;
     const rex = parseInt($('ext-regexp').value, 10); if (!isNaN(rex) && rex > 0) body.reg_expiry = rex;
     if (!body.number) { $('ext-err').textContent = 'Number is required.'; return; }
     const r = await fetch('/api/admin/extensions' + (id ? '/' + encodeURIComponent(id) : ''), { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

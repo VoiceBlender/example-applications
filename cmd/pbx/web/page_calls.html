@@ -5,7 +5,7 @@
     <div class="board-meta" data-ref="calls-count">0 active</div>
   </div>
   <div class="grid-head call-cols">
-    <div>Call</div><div class="hide-sm">Type</div><div>State</div><div>Duration</div>
+    <div>Call</div><div class="hide-sm">Type</div><div>State</div><div>Duration</div><div></div>
   </div>
   <div data-ref="call-rows"></div>
   <div class="empty" data-ref="call-empty">No active calls</div>
@@ -15,10 +15,112 @@
 {{define "pagescript"}}
 <script>
 (() => {
-  const { $, el, callStateChip, fmtDur } = PBX;
+  const { $, el, callStateChip, fmtDur, parseFilters, formatFilters, filterChips, denoiseKind, withDenoise } = PBX;
   let lastCalls = [];
+  // Which calls have their filter panel open, so a snapshot refresh does not
+  // collapse a panel the operator is working in.
+  const open = new Set();
+
+  // Any PBX activity broadcasts a snapshot, and rendering rebuilds every row
+  // from scratch — which would otherwise wipe a half-typed chain and drop the
+  // caret. drafts holds the in-progress text per leg until it is applied.
+  const drafts = new Map();
+
+  // captureFocus/restoreFocus carry the caret across a rebuild, so typing is
+  // not interrupted by an unrelated registration or call-state change.
+  function captureFocus() {
+    const a = document.activeElement;
+    if (!a || !a.dataset || !a.dataset.leg) return null;
+    return { leg: a.dataset.leg, start: a.selectionStart, end: a.selectionEnd };
+  }
+  function restoreFocus(f) {
+    if (!f) return;
+    const input = document.querySelector('.fx-input[data-leg="' + CSS.escape(f.leg) + '"]');
+    if (!input) return;
+    input.focus();
+    try { input.setSelectionRange(f.start, f.end); } catch (_) { /* not selectable */ }
+  }
+
+  // legFilterRow builds the editor for one side of a call.
+  function legFilterRow(legID, label, filters) {
+    const box = el('div', 'fx-leg');
+    box.appendChild(el('div', 'fx-leg-label', label));
+
+    const input = el('input', 'fx-input');
+    input.type = 'text';
+    input.dataset.leg = legID;
+    // An unapplied edit wins over the server's value; otherwise show what is
+    // actually running.
+    input.value = drafts.has(legID) ? drafts.get(legID) : formatFilters(filters);
+    input.placeholder = 'no processing';
+    input.oninput = () => drafts.set(legID, input.value);
+    box.appendChild(input);
+
+    const chips = el('div', 'filter-chips');
+    filterChips(chips, input);
+    box.appendChild(chips);
+
+    const foot = el('div', 'fx-foot');
+    const apply = el('button', 'filter-chip apply', 'apply');
+    apply.type = 'button';
+    const msg = el('span', 'fx-msg');
+    foot.appendChild(apply);
+    foot.appendChild(msg);
+    box.appendChild(foot);
+
+    async function send(specs) {
+      msg.className = 'fx-msg';
+      msg.textContent = 'applying…';
+      const r = await fetch('/api/calls/' + encodeURIComponent(legID) + '/filters', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filters: specs }),
+      });
+      if (r.ok) {
+        // Applied: drop the draft so the field tracks the server again.
+        drafts.delete(legID);
+        input.value = formatFilters(specs);
+        msg.className = 'fx-msg ok';
+        msg.textContent = 'applied';
+        return true;
+      }
+      // 409 carries VoiceBlender's own reason — most often that adding or
+      // removing denoise would change the chain's working rate.
+      msg.className = 'fx-msg err';
+      msg.textContent = (await r.text()).trim() || ('failed (' + r.status + ')');
+      return false;
+    }
+
+    apply.onclick = () => send(parseFilters(input.value) || []);
+
+    // One-click denoiser choice, applied immediately: judging noise
+    // suppression by ear needs the switch to happen while the same voice is
+    // talking, which typing into the field and clicking apply does not give you.
+    const ab = el('div', 'fx-ab');
+    ab.appendChild(el('span', 'fx-ab-label', 'denoise'));
+    const running = filters || [];
+    const active = denoiseKind(running);
+    [
+      ['off', '', 'remove noise suppression from this leg now'],
+      ['rnnoise', 'denoise', 'suppress noise with RNNoise (any room rate, full band kept)'],
+      ['gtcrn', 'denoise_gtcrn', 'suppress noise with GTCRN (lower CPU; runs at 16 kHz, so a 48 kHz room loses content above 8 kHz)'],
+    ].forEach(([label, kind, title]) => {
+      const b = el('button', 'filter-chip ab' + (active === kind ? ' on' : ''), label);
+      b.type = 'button';
+      b.title = title + ', leaving the rest of the chain alone';
+      b.onclick = () => send(withDenoise(running, kind));
+      ab.appendChild(b);
+    });
+    box.appendChild(ab);
+    return box;
+  }
   function renderCalls(calls) {
+    const focus = captureFocus();
     lastCalls = calls || [];
+
+    const liveCalls = new Set(lastCalls.map(c => c.id));
+    const liveLegs = new Set();
+    lastCalls.forEach(c => { if (c.a_leg) liveLegs.add(c.a_leg); if (c.b_leg) liveLegs.add(c.b_leg); });
+    open.forEach(id => { if (!liveCalls.has(id)) open.delete(id); });
+    drafts.forEach((_, leg) => { if (!liveLegs.has(leg)) drafts.delete(leg); });
     const cr = $('call-rows'); cr.textContent = '';
     $('call-empty').hidden = lastCalls.length > 0;
     $('calls-count').textContent = lastCalls.length + ' active';
@@ -33,11 +135,37 @@
       row.appendChild(el('div', 'call-kind hide-sm', c.kind || ''));
       const s = el('div'); s.appendChild(callStateChip(c)); row.appendChild(s);
       row.appendChild(el('div', 'call-dur', fmtDur(c.since)));
+
+      // Only a bridged call has two legs to filter.
+      if (c.a_leg && c.b_leg) {
+        const toggle = el('button', 'fx-toggle', open.has(c.id) ? '▾ filters' : '▸ filters');
+        toggle.type = 'button';
+        toggle.onclick = () => {
+          if (open.has(c.id)) { open.delete(c.id); } else { open.add(c.id); }
+          renderCalls(lastCalls);
+        };
+        row.appendChild(toggle);
+      }
       cr.appendChild(row);
+
+      if (c.a_leg && c.b_leg && open.has(c.id)) {
+        const panel = el('div', 'fx-panel');
+        panel.appendChild(legFilterRow(c.a_leg, (c.a_label || 'caller') + ' — audio from this side', c.a_filters));
+        panel.appendChild(legFilterRow(c.b_leg, (c.b_label || 'callee') + ' — audio from this side', c.b_filters));
+        panel.appendChild(el('div', 'fx-note',
+          'Filtering is ingress-only: each side\u2019s chain cleans or changes that side\u2019s own audio. ' +
+          'Changes land on the next audio block; enabling denoise takes about a second to reach full effect. ' +
+          'The denoise row switches between off, RNNoise and GTCRN immediately, leaving the rest of the chain alone.'));
+        cr.appendChild(panel);
+      }
     });
+    restoreFocus(focus);
   }
   PBX.onSnapshot(snap => renderCalls(snap.calls));
-  PBX.onTick(() => { if (lastCalls.length) renderCalls(lastCalls); });
+  // The tick only advances the duration counters. Skip it while a panel is
+  // open: rebuilding the rows every second under someone's cursor is churn for
+  // no benefit, and a call that actually ends still arrives as a snapshot.
+  PBX.onTick(() => { if (lastCalls.length && open.size === 0) renderCalls(lastCalls); });
 })();
 </script>
 {{end}}

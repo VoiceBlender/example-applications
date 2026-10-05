@@ -29,12 +29,17 @@
       <div class="field"><label>SIP username — blank = auto &lt;tenant&gt;-&lt;number&gt; (globally unique; configure the phone with this)</label><input type="text" data-ref="ext-username" placeholder="auto"></div>
       <div class="field"><label>Password (blank = unchanged)</label><input type="password" data-ref="ext-password" placeholder="secret"></div>
       <div class="field"><label>Codecs — priority order, comma-separated (blank = default)</label><input type="text" data-ref="ext-codecs" placeholder="opus, PCMA, PCMU" list="codec-list"></div>
+      <div class="field"><label>Audio filters — applied to audio from this phone (blank = server default)</label><input type="text" data-ref="ext-filters" placeholder="blank = server default" list="filter-list"></div>
+      <div class="filter-chips" data-ref="ext-filter-chips"></div>
+      <datalist id="filter-list"><option value="denoise"><option value="denoise_gtcrn"><option value="bandpass:low_hz=300:high_hz=3400"><option value="bandpass:low_hz=300:high_hz=3400, denoise"><option value="bandpass:low_hz=300:high_hz=3400, denoise_gtcrn"><option value="pitch:semitones=-5"><option value="pitch:semitones=5"><option value="robotic"><option value="robotic:depth=0.9"><option value="vocoder"></datalist>
       <div class="field"><label>Registration expiry (seconds, blank = 60)</label><input type="number" data-ref="ext-regexp" placeholder="60"></div>
       <datalist id="codec-list"><option value="opus"><option value="PCMU"><option value="PCMA"><option value="G722"><option value="G729"><option value="telephone-event"></datalist>
 
       <div class="field-sub">WebRTC softphone accounts</div>
       <div data-ref="ext-accts"></div>
       <button type="button" class="acct-add" data-ref="ext-acct-add">+ Add WebRTC account</button>
+      <div class="config-hint">Audio filters process this extension's own audio before it reaches the other party, any recording and any transcription. <code>denoise</code> suppresses background noise (useful for a handset somewhere noisy); <code>denoise_gtcrn</code> is an alternative noise suppressor using less CPU, which band-limits the audio to 8 kHz in a 48 kHz room (use one or the other, not both); <code>bandpass</code> and <code>gain</code> adjust the signal; <code>pitch</code> shifts the voice up or down in semitones; <code>robotic</code> gives a metallic, mechanical voice that stays easy to follow; <code>vocoder</code> is a stronger, fully synthetic robot voice that is harder to understand. Parameters go after the name as <code>:name=value</code>, and effects belong last in the chain. Noise suppression does not remove other people talking nearby.</div>
+
       <div class="config-hint">Each account signs in at <a href="/phone/login" target="_blank" style="color:var(--cyan)">/phone/login</a> and becomes an extra device that rings as this extension. Leave a password blank to keep the existing one.</div>
 
       <div class="form-err" data-ref="ext-err"></div>
@@ -47,7 +52,7 @@
 {{define "pagescript"}}
 <script>
 (() => {
-  const { $, el, cell2, extStateChip } = PBX;
+  const { $, el, parseFilters, formatFilters, filterChips, cell2, extStateChip } = PBX;
 
   function deviceList(devs) {
     const wrap = el('div', 'dev-list');
@@ -111,6 +116,7 @@
     return out;
   }
 
+
   function openExt(e) {
     $('ext-modal-title').textContent = e ? 'Edit extension' : 'Add extension';
     $('ext-id').value = e ? e.id : '';
@@ -120,6 +126,8 @@
     $('ext-password').value = '';
     $('ext-codecs').value = e && e.codecs ? e.codecs.join(', ') : '';
     $('ext-regexp').value = e && e.reg_expiry ? e.reg_expiry : '';
+    $('ext-filters').value = formatFilters(e && e.filters);
+    filterChips($('ext-filter-chips'), $('ext-filters'));
     const box = $('ext-accts'); box.textContent = '';
     if (e && e.webrtc_devices) e.webrtc_devices.forEach(d => box.appendChild(acctRow(d)));
     $('ext-err').textContent = '';
@@ -135,6 +143,8 @@
       codecs: $('ext-codecs').value.split(',').map(s => s.trim()).filter(Boolean),
       webrtc_accounts: collectAccts(),
     };
+    const filters = parseFilters($('ext-filters').value);
+    if (filters) body.filters = filters;
     const rex = parseInt($('ext-regexp').value, 10); if (!isNaN(rex) && rex > 0) body.reg_expiry = rex;
     if (!body.number) { $('ext-err').textContent = 'Extension number is required.'; return; }
     const method = id ? 'PUT' : 'POST';
